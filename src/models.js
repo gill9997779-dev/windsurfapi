@@ -167,17 +167,21 @@ export const MODELS = {
   'glm-5.1':                        { name: 'glm-5.1',                        provider: 'zhipu', enumValue: 0,   modelUid: 'glm-5-1', credit: 1.5 },
 
   // ── MiniMax ─────────────────────────────────────────────
-  // proto enum 419 = MODEL_MINIMAX_M2_1; the canonical name in cloud configs is m2.5.
-  'minimax-m2.5':                   { name: 'minimax-m2.5',                   provider: 'minimax', enumValue: 419, modelUid: 'MODEL_MINIMAX_M2_1', credit: 1 },
+  // proto enum 419 historically shipped as MODEL_MINIMAX_M2_1, but the live
+  // cloud catalog now advertises the same model under the hyphenated UID.
+  'minimax-m2.5':                   { name: 'minimax-m2.5',                   provider: 'minimax', enumValue: 419, modelUid: 'minimax-m2-5', credit: 1 },
 
   // ── Windsurf SWE ────────────────────────────────────────
   // Proto canonical enums: 359=MODEL_SWE_1_5 (fast), 369=THINKING, 377=SLOW, 420=1_6, 421=1_6_FAST.
+  // The live cloud catalog now exposes SWE 1.6 using hyphenated UIDs instead
+  // of the older MODEL_SWE_* names, so keep the stable enums but route with
+  // the cloud-advertised UIDs.
   // The default `swe-1.5` UID alias in upstream cloud config maps to the SLOW tier (377).
   'swe-1.5':                        { name: 'swe-1.5',                        provider: 'windsurf', enumValue: 377, modelUid: 'MODEL_SWE_1_5_SLOW', credit: 0.5 },
   'swe-1.5-fast':                   { name: 'swe-1.5-fast',                   provider: 'windsurf', enumValue: 359, modelUid: 'MODEL_SWE_1_5', credit: 0.5 },
   'swe-1.5-thinking':               { name: 'swe-1.5-thinking',               provider: 'windsurf', enumValue: 369, modelUid: 'MODEL_SWE_1_5_THINKING', credit: 0.75 },
-  'swe-1.6':                        { name: 'swe-1.6',                        provider: 'windsurf', enumValue: 420, modelUid: 'MODEL_SWE_1_6', credit: 0.5 },
-  'swe-1.6-fast':                   { name: 'swe-1.6-fast',                   provider: 'windsurf', enumValue: 421, modelUid: 'MODEL_SWE_1_6_FAST', credit: 0.5 },
+  'swe-1.6':                        { name: 'swe-1.6',                        provider: 'windsurf', enumValue: 420, modelUid: 'swe-1-6', credit: 0.5 },
+  'swe-1.6-fast':                   { name: 'swe-1.6-fast',                   provider: 'windsurf', enumValue: 421, modelUid: 'swe-1-6-fast', credit: 0.5 },
 
   // ── Adaptive (Windsurf 2026-04-06 changelog) ────────────
   // Adaptive Model Router auto-picks model + reasoning tier per turn.
@@ -206,6 +210,9 @@ _lookup.set('claude-sonnet-4-6', 'claude-sonnet-4.6');
 _lookup.set('claude-opus-4-6', 'claude-opus-4.6');
 _lookup.set('MODEL_CLAUDE_4_5_SONNET', 'claude-4.5-sonnet');
 _lookup.set('MODEL_CLAUDE_4_5_SONNET_THINKING', 'claude-4.5-sonnet-thinking');
+_lookup.set('MODEL_MINIMAX_M2_1', 'minimax-m2.5');
+_lookup.set('MODEL_SWE_1_6', 'swe-1.6');
+_lookup.set('MODEL_SWE_1_6_FAST', 'swe-1.6-fast');
 // UID-based aliases not already covered by modelUid field
 _lookup.set('claude-sonnet-4-6-1m', 'claude-sonnet-4.6-1m');
 _lookup.set('claude-sonnet-4-6-thinking-1m', 'claude-sonnet-4.6-thinking-1m');
@@ -424,46 +431,145 @@ export function listModels() {
     }));
 }
 
+const CLOUD_PROVIDER_MAP = {
+  MODEL_PROVIDER_ANTHROPIC: 'anthropic',
+  MODEL_PROVIDER_OPENAI: 'openai',
+  MODEL_PROVIDER_GOOGLE: 'google',
+  MODEL_PROVIDER_DEEPSEEK: 'deepseek',
+  MODEL_PROVIDER_XAI: 'xai',
+  MODEL_PROVIDER_WINDSURF: 'windsurf',
+  MODEL_PROVIDER_MOONSHOT: 'moonshot',
+};
+
+function registerLookupAlias(alias, key) {
+  const raw = String(alias || '').trim();
+  if (!raw || !key) return;
+  _lookup.set(raw, key);
+  _lookup.set(raw.toLowerCase(), key);
+}
+
+function cloudProvider(provider) {
+  return CLOUD_PROVIDER_MAP[provider]
+    || provider?.toLowerCase?.().replace('model_provider_', '')
+    || 'unknown';
+}
+
+function normalizeCloudCatalogKey(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return '';
+  return raw
+    .replace(/_/g, '-')
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9.+-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+function lookupExistingModelKey(raw) {
+  const value = String(raw || '').trim();
+  if (!value) return null;
+  if (_lookup.has(value)) return _lookup.get(value);
+  const lower = value.toLowerCase();
+  if (_lookup.has(lower)) return _lookup.get(lower);
+  const normalized = normalizeCloudCatalogKey(value);
+  if (MODELS[normalized]) return normalized;
+  if (_lookup.has(normalized)) return _lookup.get(normalized);
+  return null;
+}
+
+function findSpecificModelKeyForCloudConfig(config) {
+  return lookupExistingModelKey(config?.modelUid)
+    || lookupExistingModelKey(config?.modelInfo?.modelUid)
+    || lookupExistingModelKey(config?.modelInfo?.modelId)
+    || lookupExistingModelKey(config?.label)
+    || lookupExistingModelKey(config?.modelFamilyMetadata?.modelFamilyLabel)
+    || null;
+}
+
+function findDefaultFamilyModelKey(config) {
+  return lookupExistingModelKey(config?.modelInfo?.modelFamilyUid)
+    || lookupExistingModelKey(config?.modelFamilyMetadata?.modelFamilyLabel)
+    || null;
+}
+
+function syncModelFromCloud(key, config) {
+  const info = MODELS[key];
+  if (!info || !config) return 0;
+
+  let changed = false;
+  const nextUid = String(config.modelUid || '').trim();
+  const nextProvider = cloudProvider(config.provider);
+  const nextCredit = Number.isFinite(config.creditMultiplier) ? config.creditMultiplier : null;
+  const oldUid = info.modelUid;
+
+  if (nextUid && info.modelUid !== nextUid) {
+    info.modelUid = nextUid;
+    changed = true;
+    if (oldUid) registerLookupAlias(oldUid, key);
+  }
+  if (nextProvider && nextProvider !== 'unknown' && info.provider !== nextProvider) {
+    info.provider = nextProvider;
+    changed = true;
+  }
+  if (nextCredit != null && info.credit !== nextCredit) {
+    info.credit = nextCredit;
+    changed = true;
+  }
+
+  registerLookupAlias(key, key);
+  registerLookupAlias(info.name, key);
+  if (info.modelUid) registerLookupAlias(info.modelUid, key);
+  registerPublicModelAlias(key, info);
+  return changed ? 1 : 0;
+}
+
 /**
  * Merge live model configs from GetCascadeModelConfigs into the catalog.
  * Called once at startup after the first successful cloud fetch.
- * Only adds NEW models not already in the catalog (doesn't overwrite enums).
+ * Reconciles existing catalog entries against the cloud's current UIDs /
+ * credit multipliers, then adds any genuinely new cloud-only models.
  */
 export function mergeCloudModels(configs) {
-  if (!Array.isArray(configs)) return 0;
+  if (!Array.isArray(configs)) return { added: 0, updated: 0, defaulted: 0 };
   let added = 0;
-  const providerMap = {
-    MODEL_PROVIDER_ANTHROPIC: 'anthropic',
-    MODEL_PROVIDER_OPENAI: 'openai',
-    MODEL_PROVIDER_GOOGLE: 'google',
-    MODEL_PROVIDER_DEEPSEEK: 'deepseek',
-    MODEL_PROVIDER_XAI: 'xai',
-    MODEL_PROVIDER_WINDSURF: 'windsurf',
-    MODEL_PROVIDER_MOONSHOT: 'moonshot',
-  };
+  let updated = 0;
+  let defaulted = 0;
 
   for (const m of configs) {
     const uid = m.modelUid;
     if (!uid) continue;
-    // Already in catalog?
-    if (_lookup.has(uid) || _lookup.has(uid.toLowerCase())) continue;
+    const existingKey = findSpecificModelKeyForCloudConfig(m);
+    if (existingKey) {
+      updated += syncModelFromCloud(existingKey, m);
+      continue;
+    }
 
-    const key = uid.toLowerCase().replace(/_/g, '-');
-    if (MODELS[key]) continue;
+    const key = normalizeCloudCatalogKey(uid);
+    if (MODELS[key]) {
+      updated += syncModelFromCloud(key, m);
+      continue;
+    }
 
-    const provider = providerMap[m.provider] || m.provider?.toLowerCase()?.replace('model_provider_', '') || 'unknown';
+    const provider = cloudProvider(m.provider);
     MODELS[key] = {
       name: key,
       provider,
       enumValue: 0,
       modelUid: uid,
-      credit: m.creditMultiplier || 1,
+      credit: Number.isFinite(m.creditMultiplier) ? m.creditMultiplier : 1,
     };
-    _lookup.set(key, key);
-    _lookup.set(uid, key);
-    _lookup.set(uid.toLowerCase(), key);
+    registerLookupAlias(key, key);
+    registerLookupAlias(uid, key);
     registerPublicModelAlias(key, MODELS[key]);
     added++;
   }
-  return added;
+
+  for (const m of configs) {
+    if (!m?.isDefaultModelInFamily) continue;
+    const familyKey = findDefaultFamilyModelKey(m);
+    if (!familyKey) continue;
+    defaulted += syncModelFromCloud(familyKey, m);
+  }
+
+  return { added, updated, defaulted };
 }

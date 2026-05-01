@@ -667,13 +667,36 @@ tbody tr:hover td { background: var(--surface-2); }
   text-decoration-color: var(--text-dim);
   text-decoration-thickness: 1px;
 }
+.model-chip.status-available {
+  border-color: rgba(16,185,129,.25);
+  background: rgba(16,185,129,.05);
+}
+.model-chip.status-waiting {
+  border-color: rgba(245,158,11,.28);
+  background: rgba(245,158,11,.08);
+}
+.model-chip.status-restricted {
+  border-color: rgba(239,68,68,.22);
+  background: rgba(239,68,68,.06);
+}
+.model-chip.status-failed {
+  border-color: rgba(148,163,184,.24);
+  background: rgba(148,163,184,.08);
+}
+.model-chip.status-blocked {
+  opacity: .5;
+}
 .model-chip-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--success);
 }
-.model-chip.blocked .model-chip-dot { background: var(--error); }
+.model-chip.status-waiting .model-chip-dot { background: var(--warn); box-shadow: 0 0 6px rgba(245,158,11,.45); }
+.model-chip.status-restricted .model-chip-dot { background: var(--error); box-shadow: 0 0 6px rgba(239,68,68,.35); }
+.model-chip.status-failed .model-chip-dot { background: #94a3b8; box-shadow: 0 0 6px rgba(148,163,184,.3); }
+.model-chip.status-blocked .model-chip-dot { background: var(--text-dim); }
+.model-chip.blocked .model-chip-dot { background: var(--text-dim); box-shadow: none; }
 .model-chip-name {
   font-family: var(--mono);
   font-size: 11px;
@@ -693,6 +716,34 @@ tbody tr:hover td { background: var(--surface-2); }
   white-space: nowrap;
   font-weight: 600;
 }
+.model-chip-state {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.model-chip-state.waiting {
+  color: #f59e0b;
+  background: rgba(245,158,11,.08);
+  border-color: rgba(245,158,11,.2);
+}
+.model-chip-state.restricted {
+  color: #ef4444;
+  background: rgba(239,68,68,.08);
+  border-color: rgba(239,68,68,.2);
+}
+.model-chip-state.failed {
+  color: #94a3b8;
+  background: rgba(148,163,184,.08);
+  border-color: rgba(148,163,184,.2);
+}
+.model-chip-state.blocked {
+  color: var(--text-dim);
+  background: rgba(100,116,139,.1);
+  border-color: rgba(100,116,139,.2);
+}
 .provider-swatch {
   width: 14px; height: 14px;
   border-radius: 3px;
@@ -700,6 +751,36 @@ tbody tr:hover td { background: var(--surface-2); }
   margin-right: 6px;
   vertical-align: middle;
 }
+.model-status-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.model-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
+.model-status-pill::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 6px currentColor;
+}
+.model-status-pill.available { color: #10b981; border-color: rgba(16,185,129,.22); background: rgba(16,185,129,.05); }
+.model-status-pill.waiting { color: #f59e0b; border-color: rgba(245,158,11,.22); background: rgba(245,158,11,.07); }
+.model-status-pill.restricted { color: #ef4444; border-color: rgba(239,68,68,.22); background: rgba(239,68,68,.06); }
+.model-status-pill.failed { color: #94a3b8; border-color: rgba(148,163,184,.22); background: rgba(148,163,184,.08); }
+.model-status-pill.blocked { color: var(--text-dim); border-color: rgba(100,116,139,.22); background: rgba(100,116,139,.08); }
 
 /* ─── Badges ──────────────────────────────────── */
 .badge {
@@ -1499,6 +1580,14 @@ window._firebaseOAuth = async function(provider) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
         <span data-i18n="nav.models">模型控制</span>
       </a>
+      <a href="#pricing" data-panel="pricing">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/><path d="M8 8h9"/><path d="M7 16h10"/></svg>
+        <span data-i18n="nav.pricing">模型价格</span>
+      </a>
+      <a href="#playground" data-panel="playground">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6"/><path d="M10 9h4"/><path d="M8 3v3l-3 5a5 5 0 0 0 4.3 7.5h5.4A5 5 0 0 0 19 11l-3-5V3"/><path d="M8.5 14h7"/></svg>
+        <span data-i18n="nav.playground">模型测试</span>
+      </a>
       <a href="#proxy" data-panel="proxy">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
         <span data-i18n="nav.proxy">代理配置</span>
@@ -1875,6 +1964,119 @@ window._firebaseOAuth = async function(provider) {
     </div>
   </section>
 
+  <!-- Pricing -->
+  <section class="panel" id="p-pricing">
+    <div class="page-header">
+      <div>
+        <h1 class="page-title" data-i18n="page.pricing">模型价格</h1>
+        <div class="page-subtitle" data-i18n="pageSubtitle.pricing">查看后端实际路由模型 ID、缓存计价规则与当前美元兑人民币参考汇率</div>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-ghost btn-sm" onclick="App.loadPricing()" data-i18n-title="action.refresh" title="刷新">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-6.24-2.52L3 21"/><path d="M3 12a9 9 0 0 1 9-9 9 9 0 0 1 6.24 2.52L21 3"/><path d="M21 3v6h-6"/><path d="M3 21v-6h6"/></svg>
+          <span data-i18n="action.refresh">刷新</span>
+        </button>
+      </div>
+    </div>
+    <div class="metrics-grid" id="pricing-cards"></div>
+    <div class="section">
+      <div class="section-header">
+        <div>
+          <div class="section-title" data-i18n="section.pricingTable.title">模型价格表</div>
+          <div class="section-desc" data-i18n="section.pricingTable.desc">按实际模型名列出当前后端价格目录；支持区分官方可精确计价、参考展示和无公开单价三类状态</div>
+          <div class="field-hint" id="pricing-note" style="margin-top:6px"></div>
+        </div>
+      </div>
+      <div class="section-body tight">
+        <div class="table-wrap">
+          <table id="pricing-table">
+            <thead><tr><th data-i18n="table.header.provider">供应商</th><th data-i18n="table.header.modelFamily">模型家族</th><th data-i18n="table.header.match">匹配规则</th><th data-i18n="table.header.priceInput">输入</th><th data-i18n="table.header.priceCacheRead">缓存读取</th><th data-i18n="table.header.priceCacheWrite">缓存写入</th><th data-i18n="table.header.priceOutput">输出</th><th data-i18n="table.header.status">状态</th><th data-i18n="table.header.source">来源</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Playground -->
+  <section class="panel" id="p-playground">
+    <div class="page-header">
+      <div>
+        <h1 class="page-title" data-i18n="page.playground">模型测试</h1>
+        <div class="page-subtitle" data-i18n="pageSubtitle.playground">直接在网页里向模型发测试请求，并查看文本结果和原始 JSON 返回</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <div>
+          <div class="section-title" data-i18n="section.playgroundRequest.title">测试请求</div>
+          <div class="section-desc" data-i18n="section.playgroundRequest.desc">选择模型，填写 system 和 user prompt，点击发送后直接看模型的实际回复</div>
+        </div>
+      </div>
+      <div class="section-body">
+        <div class="field-row">
+          <div class="field" style="flex:2">
+            <label class="field-label" data-i18n="field.playgroundModel.label">模型</label>
+            <select id="playground-model" class="select"></select>
+          </div>
+          <div class="field" style="max-width:180px">
+            <label class="field-label" data-i18n="field.playgroundMaxTokens.label">Max Tokens</label>
+            <input id="playground-max-tokens" class="input" type="number" min="1" max="16384" data-i18n-placeholder="field.playgroundMaxTokens.placeholder" placeholder="1024">
+          </div>
+          <div class="field" style="max-width:180px">
+            <label class="field-label" data-i18n="field.playgroundTemperature.label">Temperature</label>
+            <input id="playground-temperature" class="input" type="number" min="0" max="2" step="0.1" data-i18n-placeholder="field.playgroundTemperature.placeholder" placeholder="1.0">
+          </div>
+        </div>
+        <div class="field-row" style="margin-top:12px">
+          <div class="field">
+            <label class="field-label" data-i18n="field.playgroundSystem.label">System Prompt（可选）</label>
+            <textarea id="playground-system" class="textarea" rows="4" data-i18n-placeholder="field.playgroundSystem.placeholder" placeholder="例如：你是一个严格的测试助手，只返回结论。"></textarea>
+          </div>
+        </div>
+        <div class="field-row" style="margin-top:12px">
+          <div class="field">
+            <label class="field-label" data-i18n="field.playgroundPrompt.label">User Prompt</label>
+            <textarea id="playground-prompt" class="textarea" rows="8" data-i18n-placeholder="field.playgroundPrompt.placeholder" placeholder="输入你想测试的提示词；支持 Ctrl/Cmd + Enter 直接发送。" onkeydown="if((event.ctrlKey||event.metaKey)&&event.key==='Enter')App.runPlayground()"></textarea>
+          </div>
+        </div>
+        <div class="field-row-actions">
+          <button class="btn btn-primary" id="playground-run-btn" onclick="App.runPlayground()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            <span data-i18n="action.test">测试</span>
+          </button>
+          <button class="btn btn-outline" onclick="App.clearPlayground()" data-i18n="action.clear">清空</button>
+          <span id="playground-status" class="text-sm text-muted" style="margin-left:auto;align-self:center"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <div>
+          <div class="section-title" data-i18n="section.playgroundResult.title">返回结果</div>
+          <div class="section-desc" data-i18n="section.playgroundResult.desc">上面显示提取出的 assistant 文本，下面保留完整原始 JSON，方便比对和排查</div>
+        </div>
+        <div class="btn-group">
+          <button class="btn btn-outline btn-sm" onclick="App.copyPlaygroundText()" data-i18n="playground.copyText">复制文本</button>
+          <button class="btn btn-outline btn-sm" onclick="App.copyPlaygroundRaw()" data-i18n="playground.copyRaw">复制 JSON</button>
+        </div>
+      </div>
+      <div class="section-body">
+        <div class="field">
+          <label class="field-label" data-i18n="field.playgroundOutput.label">Assistant 文本</label>
+          <textarea id="playground-output" class="textarea" rows="10" readonly data-i18n-placeholder="playground.outputPlaceholder" placeholder="测试结果会显示在这里"></textarea>
+        </div>
+        <div id="playground-meta" class="field-hint" style="margin-top:10px"></div>
+        <div class="field" style="margin-top:16px">
+          <label class="field-label" data-i18n="field.playgroundRaw.label">Raw JSON</label>
+          <pre id="playground-raw" style="margin:0;white-space:pre-wrap;word-break:break-word;max-height:420px;overflow:auto;padding:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);font:12px/1.6 var(--mono);color:var(--text);"></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- Proxy -->
   <section class="panel" id="p-proxy">
     <div class="page-header">
@@ -2062,12 +2264,13 @@ window._firebaseOAuth = async function(provider) {
         <div>
           <div class="section-title" data-i18n="section.modelStats.title">模型使用统计</div>
           <div class="section-desc" data-i18n="section.modelStats.desc">按模型聚合：请求量、成功率、平均耗时与 p50 / p95 延迟分位数</div>
+          <div class="field-hint" id="model-pricing-note" style="margin-top:6px"></div>
         </div>
       </div>
       <div class="section-body tight">
         <div class="table-wrap">
           <table id="model-stats-table">
-            <thead><tr><th data-i18n="table.header.model">模型</th><th data-i18n="table.header.requests">请求</th><th data-i18n="table.header.success">成功</th><th data-i18n="table.header.errors">错误</th><th data-i18n="table.header.successRate">成功率</th><th data-i18n="table.header.avg">平均</th><th data-i18n="table.header.p50">p50</th><th data-i18n="table.header.p95">p95</th></tr></thead>
+            <thead><tr><th data-i18n="table.header.model">模型</th><th data-i18n="table.header.requests">请求</th><th data-i18n="table.header.success">成功</th><th data-i18n="table.header.errors">错误</th><th data-i18n="table.header.successRate">成功率</th><th data-i18n="table.header.avg">平均</th><th data-i18n="table.header.p50">p50</th><th data-i18n="table.header.p95">p95</th><th data-i18n="table.header.tokens">Token</th><th data-i18n="table.header.costUsd">USD</th><th data-i18n="table.header.costCny">CNY</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -2436,7 +2639,7 @@ const App = {
     if (!activePanelId) return;
     const loaders = {
       overview: 'loadOverview', 'windsurf-login': 'loadWindsurfLogin',
-      accounts: 'loadAccounts', models: 'loadModels', proxy: 'loadProxy',
+      accounts: 'loadAccounts', models: 'loadModels', pricing: 'loadPricing', playground: 'loadPlayground', proxy: 'loadProxy',
       logs: 'loadLogs', stats: 'loadStats', bans: 'loadBans',
       experimental: 'loadExperimental', credits: 'loadCredits',
     };
@@ -2523,7 +2726,7 @@ const App = {
 
     const loaders = {
       overview: 'loadOverview', 'windsurf-login': 'loadWindsurfLogin',
-      accounts: 'loadAccounts', models: 'loadModels', proxy: 'loadProxy',
+      accounts: 'loadAccounts', models: 'loadModels', pricing: 'loadPricing', playground: 'loadPlayground', proxy: 'loadProxy',
       logs: 'loadLogs', stats: 'loadStats', bans: 'loadBans',
       experimental: 'loadExperimental',
       credits: 'loadCredits',
@@ -3494,6 +3697,123 @@ const App = {
     this.loadAccounts();
   },
 
+  accountModelStatusLabel(status) {
+    return I18n.t(`account.detail.models.status.${status}`);
+  },
+
+  summarizeAccountModelStates(states) {
+    const summary = { total: 0, available: 0, waiting: 0, restricted: 0, failed: 0, blocked: 0 };
+    for (const state of states || []) {
+      const key = summary[state?.status] != null ? state.status : 'restricted';
+      summary[key]++;
+      summary.total++;
+    }
+    return summary;
+  },
+
+  modelStatusPriority(status) {
+    return ({
+      waiting: 0,
+      available: 1,
+      failed: 2,
+      restricted: 3,
+      blocked: 4,
+    })[status] ?? 9;
+  },
+
+  getAccountModelState(a, modelId) {
+    const now = Date.now();
+    const blocked = new Set(a.blockedModels || []);
+    const available = new Set(a.availableModels || []);
+    const tierModels = new Set(a.tierModels || []);
+    const capabilities = a.capabilities || {};
+    const capability = capabilities[modelId] || null;
+    const rpmUsed = a.rpmUsed ?? 0;
+    const rpmLimit = a.rpmLimit ?? 0;
+    const globalWaitMs = a.rateLimitedUntil && a.rateLimitedUntil > now ? a.rateLimitedUntil - now : 0;
+    const modelWaitUntil = a.modelRateLimits?.[modelId] || 0;
+    const modelWaitMs = modelWaitUntil > now ? modelWaitUntil - now : 0;
+    const fmtWait = (ms) => this.fmtDuration(Math.max(1, Math.ceil(ms / 1000)));
+
+    if (blocked.has(modelId)) {
+      return {
+        status: 'blocked',
+        label: this.accountModelStatusLabel('blocked'),
+        reason: I18n.t('account.detail.models.reason.blocked'),
+      };
+    }
+    if (a.status !== 'active') {
+      return {
+        status: 'restricted',
+        label: this.accountModelStatusLabel('restricted'),
+        reason: I18n.t('account.detail.models.reason.accountStatus', { status: a.status }),
+      };
+    }
+    if (globalWaitMs > 0) {
+      return {
+        status: 'waiting',
+        label: this.accountModelStatusLabel('waiting'),
+        reason: I18n.t('account.detail.models.reason.accountRateLimited', { wait: fmtWait(globalWaitMs) }),
+      };
+    }
+    if (modelWaitMs > 0) {
+      return {
+        status: 'waiting',
+        label: this.accountModelStatusLabel('waiting'),
+        reason: I18n.t('account.detail.models.reason.modelRateLimited', { wait: fmtWait(modelWaitMs) }),
+      };
+    }
+    if (rpmLimit > 0 && rpmUsed >= rpmLimit) {
+      return {
+        status: 'waiting',
+        label: this.accountModelStatusLabel('waiting'),
+        reason: I18n.t('account.detail.models.reason.rpmFull'),
+      };
+    }
+    if (rpmLimit <= 0) {
+      return {
+        status: 'restricted',
+        label: this.accountModelStatusLabel('restricted'),
+        reason: I18n.t('account.detail.models.reason.expired'),
+      };
+    }
+    if (capability?.reason === 'not_entitled') {
+      return {
+        status: 'restricted',
+        label: this.accountModelStatusLabel('restricted'),
+        reason: I18n.t('account.detail.models.reason.notEntitled'),
+      };
+    }
+    if (capability?.ok === false) {
+      return {
+        status: 'failed',
+        label: this.accountModelStatusLabel('failed'),
+        reason: I18n.t('account.detail.models.reason.probeFailed', { reason: capability.reason || 'unknown' }),
+      };
+    }
+    if (available.has(modelId)) {
+      return {
+        status: 'available',
+        label: this.accountModelStatusLabel('available'),
+        reason: capability?.reason === 'user_status'
+          ? I18n.t('account.detail.models.reason.allowedByUpstream')
+          : I18n.t('account.detail.models.reason.allowedByTier'),
+      };
+    }
+    if (tierModels.has(modelId)) {
+      return {
+        status: 'available',
+        label: this.accountModelStatusLabel('available'),
+        reason: I18n.t('account.detail.models.reason.allowedByTier'),
+      };
+    }
+    return {
+      status: 'restricted',
+      label: this.accountModelStatusLabel('restricted'),
+      reason: I18n.t('account.detail.models.reason.fallbackRestricted'),
+    };
+  },
+
   renderAccountDetail(a) {
     const cr = a.credits || {};
     const us = a.userStatus || {};
@@ -3527,9 +3847,10 @@ const App = {
       </div>`;
     };
 
-    // Group tierModels by provider
+    // Group models by provider and classify them into available / waiting /
+    // restricted states so operators can tell "wait a bit" apart from
+    // "this account simply cannot use it".
     const tierModels = a.tierModels || [];
-    const blocked = new Set(a.blockedModels || []);
     const providerOrder = ['anthropic', 'openai', 'google', 'deepseek', 'xai', 'alibaba', 'moonshot', 'zhipu', 'minimax', 'windsurf', 'other'];
     const providerColors = {
       anthropic: '#d97706', openai: '#10b981', google: '#4285f4', deepseek: '#7c3aed',
@@ -3542,30 +3863,73 @@ const App = {
       moonshot: 'Moonshot · Kimi', zhipu: 'Zhipu · GLM', minimax: 'MiniMax',
       windsurf: 'Windsurf · SWE', other: 'Other',
     };
+    const modelIds = [...new Set(
+      (Object.keys(catalog).length ? Object.keys(catalog) : []).concat(
+        a.availableModels || [],
+        tierModels,
+        a.blockedModels || [],
+        Object.keys(a.capabilities || {}),
+        Object.keys(a.modelRateLimits || {})
+      )
+    )];
+    const modelEntries = modelIds.map((id) => {
+      const info = catalog[id] || {};
+      const provider = info.provider || 'other';
+      return {
+        id,
+        ...info,
+        provider,
+        state: this.getAccountModelState(a, id),
+      };
+    });
+    const stateSummary = this.summarizeAccountModelStates(modelEntries.map((m) => m.state));
+    const summaryStatuses = ['available', 'waiting', 'restricted', 'failed', 'blocked'];
+    const statusPillsHtml = summaryStatuses
+      .filter((status) => stateSummary[status] > 0)
+      .map((status) => `<span class="model-status-pill ${status}">${this.accountModelStatusLabel(status)} ${stateSummary[status]}</span>`)
+      .join('');
     const groups = {};
-    for (const m of tierModels) {
-      const info = catalog[m] || {};
-      const prov = info.provider || 'other';
-      (groups[prov] = groups[prov] || []).push({ id: m, ...info });
+    for (const entry of modelEntries) {
+      (groups[entry.provider] = groups[entry.provider] || []).push(entry);
     }
-    const availCount = tierModels.length - blocked.size;
     const modelGroupsHtml = providerOrder
       .filter(p => groups[p])
       .map(p => {
-        const models = groups[p].sort((a, b) => (a.credit || 0) - (b.credit || 0));
-        const blockedIn = models.filter(m => blocked.has(m.id)).length;
-        const availIn = models.length - blockedIn;
+        const models = groups[p].sort((a, b) => {
+          const statusDelta = this.modelStatusPriority(a.state.status) - this.modelStatusPriority(b.state.status);
+          if (statusDelta !== 0) return statusDelta;
+          const creditDelta = (a.credit ?? 999) - (b.credit ?? 999);
+          if (creditDelta !== 0) return creditDelta;
+          return String(a.id).localeCompare(String(b.id));
+        });
+        const groupSummary = this.summarizeAccountModelStates(models.map((m) => m.state));
+        const groupCountParts = [
+          groupSummary.available ? `${groupSummary.available} ${this.accountModelStatusLabel('available')}` : '',
+          groupSummary.waiting ? `${groupSummary.waiting} ${this.accountModelStatusLabel('waiting')}` : '',
+          groupSummary.restricted ? `${groupSummary.restricted} ${this.accountModelStatusLabel('restricted')}` : '',
+          groupSummary.failed ? `${groupSummary.failed} ${this.accountModelStatusLabel('failed')}` : '',
+          groupSummary.blocked ? `${groupSummary.blocked} ${this.accountModelStatusLabel('blocked')}` : '',
+        ].filter(Boolean);
         return `<div class="model-group">
           <div class="model-group-head">
             <span class="model-group-name"><span class="provider-swatch" style="background:${providerColors[p]}"></span>${providerLabels[p] || p}</span>
-            <span class="model-group-count">${availIn}/${models.length}</span>
+            <span class="model-group-count">${groupCountParts.join(' · ') || models.length}</span>
           </div>
           <div class="model-chips">
-            ${models.map(m => `<div class="model-chip ${blocked.has(m.id) ? 'blocked' : ''}" title="${m.id}">
+            ${models.map(m => {
+              const state = m.state || { status: 'restricted', label: this.accountModelStatusLabel('restricted'), reason: '' };
+              const stateMeta = state.status === 'available'
+                ? (m.credit != null
+                  ? `<span class="model-chip-cost" title="${T('creditPerCall')}">${m.credit}${T('creditUnit')}</span>`
+                  : `<span class="model-chip-cost" style="color:var(--text-dim);background:transparent;border-color:var(--border)">—</span>`)
+                : `<span class="model-chip-state ${state.status}">${this.esc(state.label)}</span>`;
+              const chipTitle = [m.id, state.label, state.reason].filter(Boolean).join(' · ');
+              return `<div class="model-chip status-${state.status} ${state.status === 'blocked' ? 'blocked' : ''}" title="${this.esc(chipTitle)}">
               <span class="model-chip-dot"></span>
               <span class="model-chip-name">${this.esc(m.id)}</span>
-              ${m.credit != null ? `<span class="model-chip-cost" title="${T('creditPerCall')}">${m.credit}${T('creditUnit')}</span>` : `<span class="model-chip-cost" style="color:var(--text-dim);background:transparent;border-color:var(--border)">—</span>`}
-            </div>`).join('')}
+              ${stateMeta}
+            </div>`;
+            }).join('')}
           </div>
         </div>`;
       }).join('');
@@ -3603,12 +3967,14 @@ const App = {
           <div class="detail-card-head">
             <span class="dot" style="background:var(--success);box-shadow:0 0 6px var(--success)"></span>
             ${T('models.title')}
-            <span style="color:var(--text-dim);font-weight:400;font-size:11px;margin-left:6px">${availCount} / ${tierModels.length} ${T('models.available')}${blocked.size > 0 ? ` · ${blocked.size} ${T('models.blocked')}` : ''}</span>
+            <span style="color:var(--text-dim);font-weight:400;font-size:11px;margin-left:6px">${stateSummary.available} / ${stateSummary.total} ${T('models.available')}${stateSummary.waiting > 0 ? ` · ${stateSummary.waiting} ${this.accountModelStatusLabel('waiting')}` : ''}${stateSummary.restricted > 0 ? ` · ${stateSummary.restricted} ${this.accountModelStatusLabel('restricted')}` : ''}</span>
             <div style="margin-left:auto;display:flex;gap:4px">
               <button class="btn btn-ghost btn-xs" onclick="App.openBlockedModal('${this.escJsAttr(a.id)}')" style="font-size:10px">${I18n.t('account.editModels')}</button>
             </div>
           </div>
-          ${tierModels.length === 0 ? `<div style="color:var(--text-dim);font-size:12px;padding:10px 0">${I18n.t('toast.noTierModels')}</div>` : modelGroupsHtml}
+          ${statusPillsHtml ? `<div class="model-status-summary">${statusPillsHtml}</div>` : ''}
+          <div class="field-hint" style="margin-bottom:12px">${T('models.legend')}</div>
+          ${modelEntries.length === 0 ? `<div style="color:var(--text-dim);font-size:12px;padding:10px 0">${I18n.t('toast.noTierModels')}</div>` : modelGroupsHtml}
         </div>
 
         <div class="detail-card" style="grid-column:1/-1">
@@ -4024,6 +4390,294 @@ const App = {
     this.updateModelListUI();
   },
 
+  // ─── Playground ──────────────────────────────
+  async loadPlayground() {
+    if (!this.allModels.length) {
+      const modelData = await this.api('GET', '/models');
+      this.allModels = modelData.models || [];
+    }
+
+    const select = document.getElementById('playground-model');
+    const savedModel = localStorage.getItem('playground_model') || '';
+    const models = this.allModels || [];
+    select.innerHTML = models.map((m) => (
+      `<option value="${this.esc(m.id)}">${this.esc(m.name)}${m.provider ? ` · ${this.esc(m.provider)}` : ''}</option>`
+    )).join('');
+    if (models.length) {
+      const preferred = models.some((m) => m.id === savedModel) ? savedModel : models[0].id;
+      select.value = preferred;
+    }
+
+    const maxTokensEl = document.getElementById('playground-max-tokens');
+    const temperatureEl = document.getElementById('playground-temperature');
+    if (!maxTokensEl.value) maxTokensEl.value = localStorage.getItem('playground_max_tokens') || '1024';
+    if (!temperatureEl.value) temperatureEl.value = localStorage.getItem('playground_temperature') || '1';
+    document.getElementById('playground-system').value = localStorage.getItem('playground_system') || '';
+    document.getElementById('playground-prompt').value = localStorage.getItem('playground_prompt') || '';
+
+    const rawEl = document.getElementById('playground-raw');
+    const outputEl = document.getElementById('playground-output');
+    const statusEl = document.getElementById('playground-status');
+    const metaEl = document.getElementById('playground-meta');
+    if (rawEl.dataset.state !== 'response') {
+      rawEl.dataset.state = 'empty';
+      rawEl.textContent = I18n.t('playground.rawPlaceholder');
+    }
+    if (!outputEl.value) outputEl.placeholder = I18n.t('playground.outputPlaceholder');
+    if (statusEl.dataset.state !== 'response') {
+      statusEl.dataset.state = 'empty';
+      statusEl.textContent = I18n.t('playground.ready');
+    }
+    if (metaEl.dataset.state !== 'response') {
+      metaEl.dataset.state = 'empty';
+      metaEl.textContent = I18n.t('playground.metaEmpty');
+    }
+  },
+
+  clearPlayground() {
+    document.getElementById('playground-system').value = '';
+    document.getElementById('playground-prompt').value = '';
+    document.getElementById('playground-output').value = '';
+    document.getElementById('playground-raw').dataset.state = 'empty';
+    document.getElementById('playground-raw').textContent = I18n.t('playground.rawPlaceholder');
+    document.getElementById('playground-status').dataset.state = 'empty';
+    document.getElementById('playground-status').textContent = I18n.t('playground.ready');
+    document.getElementById('playground-meta').dataset.state = 'empty';
+    document.getElementById('playground-meta').textContent = I18n.t('playground.metaEmpty');
+    localStorage.removeItem('playground_system');
+    localStorage.removeItem('playground_prompt');
+  },
+
+  formatPlaygroundMeta(result) {
+    const usage = result?.usage || {};
+    const parts = [];
+    if (result?.model) parts.push(I18n.t('playground.metaModel', { model: result.model }));
+    if (result?.finishReason) parts.push(I18n.t('playground.metaFinishReason', { reason: result.finishReason }));
+    if (usage.prompt_tokens != null || usage.completion_tokens != null || usage.total_tokens != null) {
+      parts.push(I18n.t('playground.metaUsage', {
+        prompt: usage.prompt_tokens ?? 0,
+        completion: usage.completion_tokens ?? 0,
+        total: usage.total_tokens ?? 0,
+      }));
+    }
+    return parts.join(' · ') || I18n.t('playground.metaEmpty');
+  },
+
+  async runPlayground() {
+    const model = document.getElementById('playground-model').value;
+    const system = document.getElementById('playground-system').value;
+    const prompt = document.getElementById('playground-prompt').value;
+    const maxTokens = document.getElementById('playground-max-tokens').value;
+    const temperature = document.getElementById('playground-temperature').value;
+    const btn = document.getElementById('playground-run-btn');
+    const statusEl = document.getElementById('playground-status');
+    const outputEl = document.getElementById('playground-output');
+    const rawEl = document.getElementById('playground-raw');
+    const metaEl = document.getElementById('playground-meta');
+
+    if (!prompt.trim()) {
+      this.toast(I18n.t('playground.promptRequired'), 'error');
+      return;
+    }
+
+    localStorage.setItem('playground_model', model || '');
+    localStorage.setItem('playground_system', system || '');
+    localStorage.setItem('playground_prompt', prompt || '');
+    localStorage.setItem('playground_max_tokens', maxTokens || '');
+    localStorage.setItem('playground_temperature', temperature || '');
+
+    btn.disabled = true;
+    statusEl.dataset.state = 'loading';
+    statusEl.textContent = I18n.t('playground.running');
+    outputEl.value = '';
+    rawEl.dataset.state = 'loading';
+    rawEl.textContent = I18n.t('status.loading');
+    metaEl.dataset.state = 'loading';
+    metaEl.textContent = '';
+
+    const requestBody = {
+      model,
+      system,
+      prompt,
+      maxTokens,
+      temperature,
+    };
+
+    try {
+      const result = await this.api('POST', '/playground/chat', requestBody);
+      outputEl.value = result?.text || '';
+      rawEl.dataset.state = 'response';
+      rawEl.textContent = JSON.stringify(result?.response || result || {}, null, 2);
+      metaEl.dataset.state = 'response';
+      metaEl.textContent = this.formatPlaygroundMeta(result);
+      if (result?.success) {
+        statusEl.dataset.state = 'response';
+        statusEl.textContent = I18n.t('playground.success');
+      } else {
+        const err = result?.error || result?.response?.error?.message || I18n.t('error.unknown');
+        statusEl.dataset.state = 'response';
+        statusEl.textContent = `${I18n.t('playground.failed')}: ${err}`;
+      }
+    } catch (e) {
+      rawEl.dataset.state = 'response';
+      rawEl.textContent = JSON.stringify({ error: e.message }, null, 2);
+      metaEl.dataset.state = 'empty';
+      metaEl.textContent = I18n.t('playground.metaEmpty');
+      statusEl.dataset.state = 'response';
+      statusEl.textContent = `${I18n.t('playground.failed')}: ${e.message}`;
+    } finally {
+      btn.disabled = false;
+    }
+  },
+
+  copyPlaygroundText() {
+    const text = document.getElementById('playground-output').value || '';
+    if (!text) return this.toast(I18n.t('playground.nothingToCopy'), 'error');
+    this.copyText(text);
+  },
+
+  copyPlaygroundRaw() {
+    const text = document.getElementById('playground-raw').textContent || '';
+    if (!text || text === I18n.t('playground.rawPlaceholder')) {
+      return this.toast(I18n.t('playground.nothingToCopy'), 'error');
+    }
+    this.copyText(text);
+  },
+
+  // ─── Pricing ─────────────────────────────────
+  async loadPricing() {
+    const d = await this.api('GET', '/pricing');
+    const fx = d.pricingFx || {};
+    const summary = d.summary || {};
+    const entries = Array.isArray(d.entries) ? d.entries.slice() : [];
+    const pricingCards = document.getElementById('pricing-cards');
+    const pricingNote = document.getElementById('pricing-note');
+    const tbody = document.querySelector('#pricing-table tbody');
+    const fxRate = fx.usdToCny ? Number(fx.usdToCny).toFixed(4) : '-';
+    const fxDate = fx.date || '-';
+    const providers = new Set(entries.map((entry) => entry.provider).filter(Boolean));
+    const exactCount = summary.exactModels || summary.pricedFamilies || 0;
+    const estimatedCount = summary.estimatedModels || 0;
+    const referenceCount = summary.referenceModels || summary.referenceFamilies || 0;
+    const noPublicCount = summary.noPublicPriceModels || 0;
+    const unsupportedCount = summary.unsupportedModels || 0;
+
+    pricingCards.innerHTML = `
+      <div class="card info"><div class="card-header"><div class="card-title">${I18n.t('card.pricingFx.title')}</div></div><div class="card-value">¥${this.esc(fxRate)}</div><div class="card-sub">${I18n.t('card.pricingFx.subtitle')}</div></div>
+      <div class="card"><div class="card-header"><div class="card-title">${I18n.t('card.pricingUnit.title')}</div></div><div class="card-value">1M</div><div class="card-sub">${I18n.t('card.pricingUnit.subtitle')}</div></div>
+      <div class="card success"><div class="card-header"><div class="card-title">${I18n.t('card.pricedFamilies.title')}</div></div><div class="card-value">${this.fmtNumber(exactCount)}</div><div class="card-sub">${I18n.t('card.pricedFamilies.subtitle', { count: providers.size || summary.providerCount || 0 })}</div></div>
+      <div class="card accent"><div class="card-header"><div class="card-title">${I18n.t('card.estimatedFamilies.title')}</div></div><div class="card-value">${this.fmtNumber(estimatedCount)}</div><div class="card-sub">${I18n.t('card.estimatedFamilies.subtitle')}</div></div>
+      <div class="card warn"><div class="card-header"><div class="card-title">${I18n.t('card.unpricedFamilies.title')}</div></div><div class="card-value">${this.fmtNumber(referenceCount + noPublicCount + unsupportedCount)}</div><div class="card-sub">${I18n.t('card.unpricedFamilies.subtitle', { count: summary.sourceCount || 0 })}</div></div>
+    `;
+
+    if (pricingNote) {
+      pricingNote.textContent = I18n.t('pricing.note', {
+        rate: fxRate,
+        source: fx.source || '-',
+        date: fxDate,
+        exact: this.fmtNumber(exactCount),
+        estimated: this.fmtNumber(estimatedCount),
+        reference: this.fmtNumber(referenceCount),
+        unpriced: this.fmtNumber(noPublicCount + unsupportedCount),
+      });
+    }
+
+    const providerLabel = (provider) => {
+      const map = {
+        openai: 'OpenAI',
+        anthropic: 'Anthropic',
+        google: 'Google',
+        deepseek: 'DeepSeek',
+        xai: 'xAI',
+        alibaba: 'Alibaba',
+        moonshot: 'Moonshot',
+        zhipu: 'Zhipu',
+        minimax: 'MiniMax',
+        windsurf: 'Windsurf',
+        unknown: 'Unknown',
+      };
+      return map[provider] || provider || 'Unknown';
+    };
+    const providerBadgeClass = (provider) => ({
+      openai: 'info',
+      anthropic: 'pro',
+      google: 'info',
+      deepseek: 'pro',
+      xai: 'active',
+      alibaba: 'warn',
+      moonshot: 'active',
+      zhipu: 'warn',
+      minimax: 'active',
+      windsurf: 'warn',
+      unknown: 'disabled',
+    }[provider] || 'disabled');
+    const formatUnitCell = (usd, cny, displayUsd = '', displayCny = '') => {
+      if (displayUsd) {
+        return `${this.esc(displayUsd)}${displayCny ? `<div class="text-xs text-dim">${this.esc(displayCny)}</div>` : ''}`;
+      }
+      if (!Number.isFinite(Number(usd))) return '—';
+      return `${this.fmtMoney(usd, '$')}<div class="text-xs text-dim">${I18n.t('pricing.approxCny', { amount: this.fmtMoney(cny, '¥') })}</div>`;
+    };
+    const formatCacheWriteCell = (entry) => {
+      const displayWrite = entry.displayUsdPerM?.cacheWrite || '';
+      const displayWriteCny = entry.displayCnyPerM?.cacheWrite || '';
+      if (displayWrite) return `${this.esc(displayWrite)}${displayWriteCny ? `<div class="text-xs text-dim">${this.esc(displayWriteCny)}</div>` : ''}`;
+      if (!entry.available || !entry.unitUsdPerM) return '—';
+      const usd = entry.unitUsdPerM;
+      const cny = entry.unitCnyPerM || {};
+      if (entry.cacheWriteMode === 'tiered') {
+        return `
+          <div>${I18n.t('pricing.cacheWriteTier5m')} ${this.fmtMoney(usd.cacheWrite5m, '$')}</div>
+          <div class="text-xs text-dim">${I18n.t('pricing.approxCny', { amount: this.fmtMoney(cny.cacheWrite5m, '¥') })}</div>
+          <div style="margin-top:6px">${I18n.t('pricing.cacheWriteTier1h')} ${this.fmtMoney(usd.cacheWrite1h, '$')}</div>
+          <div class="text-xs text-dim">${I18n.t('pricing.approxCny', { amount: this.fmtMoney(cny.cacheWrite1h, '¥') })}</div>
+        `;
+      }
+      return `${I18n.t('pricing.cacheWriteFallback')} ${this.fmtMoney(usd.cacheWriteFallback, '$')}<div class="text-xs text-dim">${I18n.t('pricing.approxCny', { amount: this.fmtMoney(cny.cacheWriteFallback, '¥') })}</div>`;
+    };
+    const statusLabel = (entry) => {
+      if (entry.catalogStatus === 'exact') return I18n.t('pricing.statusPriced');
+      if (entry.catalogStatus === 'estimated') return I18n.t('pricing.statusEstimated');
+      if (entry.catalogStatus === 'reference') return I18n.t('pricing.statusReference');
+      if (entry.reason === 'no_public_token_price' || entry.catalogStatus === 'no_public_price') return I18n.t('pricing.statusNoPublicPrice');
+      return I18n.t('pricing.statusUnsupported');
+    };
+    const statusClass = (entry) => {
+      if (entry.catalogStatus === 'exact') return 'success';
+      if (entry.catalogStatus === 'estimated') return 'active';
+      if (entry.catalogStatus === 'reference') return 'info';
+      if (entry.reason === 'no_public_token_price' || entry.catalogStatus === 'no_public_price') return 'warn';
+      return 'disabled';
+    };
+    const sourceLabel = (source) => {
+      try {
+        return new URL(source).hostname.replace(/^www\./, '');
+      } catch {
+        return source || I18n.t('pricing.sourceUnavailable');
+      }
+    };
+
+    tbody.innerHTML = entries.map((entry) => {
+      const unitsUsd = entry.unitUsdPerM || {};
+      const unitsCny = entry.unitCnyPerM || {};
+      const source = entry.source ? `<a href="${this.esc(entry.source)}" target="_blank" rel="noreferrer noopener">${this.esc(sourceLabel(entry.source))}</a>` : `<span class="text-dim">${I18n.t('pricing.sourceUnavailable')}</span>`;
+      const note = entry.note ? `<div class="text-xs text-dim" style="margin-top:6px">${this.esc(entry.note)}</div>` : '';
+      return `
+        <tr>
+          <td><span class="badge ${providerBadgeClass(entry.provider)} no-dot">${this.esc(providerLabel(entry.provider))}</span></td>
+          <td><div style="font-weight:600">${this.esc(entry.family)}</div><div class="text-xs text-dim">${this.esc(entry.matchDisplay || entry.id || '-')}</div>${note}</td>
+          <td><code>${this.esc(entry.matchDisplay || '-')}</code></td>
+          <td class="text-sm">${formatUnitCell(unitsUsd.input, unitsCny.input, entry.displayUsdPerM?.input, entry.displayCnyPerM?.input)}</td>
+          <td class="text-sm">${formatUnitCell(unitsUsd.cacheRead, unitsCny.cacheRead, entry.displayUsdPerM?.cacheRead, entry.displayCnyPerM?.cacheRead)}</td>
+          <td class="text-sm">${formatCacheWriteCell(entry)}</td>
+          <td class="text-sm">${formatUnitCell(unitsUsd.output, unitsCny.output, entry.displayUsdPerM?.output, entry.displayCnyPerM?.output)}</td>
+          <td><span class="badge ${statusClass(entry)}">${statusLabel(entry)}</span></td>
+          <td class="text-sm">${source}</td>
+        </tr>
+      `;
+    }).join('') || `<tr class="empty-row"><td colspan="9">${I18n.t('table.empty.pricing')}</td></tr>`;
+  },
+
   // ─── Proxy ───────────────────────────────────
   async loadProxy() {
     const d = await this.api('GET', '/proxy');
@@ -4360,6 +5014,10 @@ const App = {
     const uptimeSec = d.startedAt ? Math.floor((Date.now() - d.startedAt) / 1000) : 0;
     const fmtUptime = s => s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s/60)}m` : s < 86400 ? `${(s/3600).toFixed(1)}h` : `${(s/86400).toFixed(1)}d`;
     const usage = d.usageTotals || d.usage || {};
+    const pricing = d.pricingSummary || {};
+    const fx = d.pricingFx || {};
+    const fxRate = fx.usdToCny ? Number(fx.usdToCny).toFixed(4) : '-';
+    const fxDate = fx.date || '-';
 
     document.getElementById('stats-cards').innerHTML = `
       <div class="card info"><div class="card-header"><div class="card-title">${I18n.t('card.stats.title')}</div></div><div class="card-value">${totalReq}</div><div class="card-sub">${I18n.t('card.stats.subtitle', { time: fmtUptime(uptimeSec) })}</div></div>
@@ -4368,14 +5026,40 @@ const App = {
       <div class="card accent"><div class="card-header"><div class="card-title">${I18n.t('card.p95Latency.title')}</div></div><div class="card-value">${avgP95}<span style="font-size:14px;font-weight:400;margin-left:4px">ms</span></div><div class="card-sub">${I18n.t('card.p95Latency.subtitle', { count: allP95.length })}</div></div>
       <div class="card info"><div class="card-header"><div class="card-title">总 Token</div></div><div class="card-value">${this.fmtNumber(usage.totalTokens || 0)}</div><div class="card-sub">Input ${this.fmtNumber(usage.promptTokens || 0)}  Output ${this.fmtNumber(usage.completionTokens || 0)}</div></div>
       <div class="card"><div class="card-header"><div class="card-title">缓存 Token</div></div><div class="card-value">${this.fmtNumber(usage.cacheReadTokens || 0)}</div><div class="card-sub">Read ${this.fmtNumber(usage.cacheReadTokens || 0)}  Write ${this.fmtNumber(usage.cacheWriteTokens || 0)}</div></div>
+      <div class="card info"><div class="card-header"><div class="card-title">${I18n.t('card.pricingUsd.title')}</div></div><div class="card-value">${this.fmtMoney(pricing.totalUsd || 0, '$')}</div><div class="card-sub">${I18n.t('card.pricingUsd.subtitle', { priced: pricing.pricedModels || 0, total: pricing.totalModels || 0, official: pricing.officialModels || 0, estimated: pricing.estimatedModels || 0 })}</div></div>
+      <div class="card"><div class="card-header"><div class="card-title">${I18n.t('card.pricingCny.title')}</div></div><div class="card-value">${this.fmtMoney(pricing.totalCny || 0, '¥')}</div><div class="card-sub">${I18n.t('card.pricingCny.subtitle', { rate: fxRate, date: fxDate })}</div></div>
     `;
 
     const models = d.modelCounts || {};
     const sortedModels = Object.entries(models).sort(([,a],[,b]) => b.requests - a.requests);
     const tbody = document.querySelector('#model-stats-table tbody');
+    const pricingNote = document.getElementById('model-pricing-note');
+    if (pricingNote) {
+      const unpriced = Array.isArray(pricing.unpricedModels) ? pricing.unpricedModels : [];
+      const names = unpriced.map((x) => x.model).slice(0, 6).join(', ');
+      pricingNote.textContent = I18n.t('section.modelStats.pricingNote', {
+        rate: fxRate,
+        date: fxDate,
+        source: fx.source || '-',
+        priced: pricing.pricedModels || 0,
+        total: pricing.totalModels || 0,
+        official: pricing.officialModels || 0,
+        estimated: pricing.estimatedModels || 0,
+        count: unpriced.length,
+        models: names || '-',
+      });
+    }
     tbody.innerHTML = sortedModels.map(([m, s]) => {
       const rate = s.requests > 0 ? ((s.success/s.requests)*100).toFixed(1) : '0.0';
       const rateColor = Number(rate) >= 95 ? 'var(--success)' : Number(rate) >= 80 ? 'var(--warning, #f59e0b)' : 'var(--error)';
+      const u = s.usage || {};
+      const p = s.pricing || {};
+      const priced = !!p.available;
+      const pricingKind = p.catalogStatus === 'estimated' ? I18n.t('pricing.statusEstimated') : I18n.t('pricing.statusPriced');
+      const tokenTitle = `Prompt ${this.fmtNumber(u.promptTokens || 0)} · Output ${this.fmtNumber(u.completionTokens || 0)} · Cache Read ${this.fmtNumber(u.cacheReadTokens || 0)} · Cache Write ${this.fmtNumber(u.cacheWriteTokens || 0)}`;
+      const pricingTitle = priced
+        ? `Fresh ${this.fmtMoney(p.usd?.input || 0, '$')} · Cache ${this.fmtMoney(((p.usd?.cacheRead || 0) + (p.usd?.cacheWrite || 0)), '$')} · Output ${this.fmtMoney(p.usd?.output || 0, '$')}`
+        : (p.reason || 'unpriced');
       return `
       <tr>
         <td><code>${this.esc(m)}</code></td>
@@ -4386,8 +5070,11 @@ const App = {
         <td class="text-sm">${s.avgMs || 0} ms</td>
         <td class="text-sm">${s.p50Ms || 0} ms</td>
         <td class="text-sm">${s.p95Ms || 0} ms</td>
+        <td class="text-sm" title="${this.esc(tokenTitle)}">${this.fmtNumber(u.totalTokens || 0)}<div class="text-xs text-dim">R ${this.fmtNumber(u.cacheReadTokens || 0)} · W ${this.fmtNumber(u.cacheWriteTokens || 0)}</div></td>
+        <td class="text-sm" title="${this.esc(pricingTitle)}">${priced ? this.fmtMoney(p.usd?.total || 0, '$') : '—'}<div class="text-xs text-dim">${priced ? `${pricingKind} · In ${this.fmtMoney(p.usd?.input || 0, '$')} · Cache ${this.fmtMoney(((p.usd?.cacheRead || 0) + (p.usd?.cacheWrite || 0)), '$')}` : I18n.t('status.unpriced')}</div></td>
+        <td class="text-sm">${priced ? this.fmtMoney(p.cny?.total || 0, '¥') : '—'}<div class="text-xs text-dim">${priced ? `Out ${this.fmtMoney(p.usd?.output || 0, '$')}` : (p.provider || '-')}</div></td>
       </tr>`;
-    }).join('') || `<tr class="empty-row"><td colspan="8">${I18n.t('table.empty.noRequestData')}</td></tr>`;
+    }).join('') || `<tr class="empty-row"><td colspan="11">${I18n.t('table.empty.noRequestData')}</td></tr>`;
 
     const accounts = d.accountCounts || {};
     const sortedAccts = Object.entries(accounts).sort(([,a],[,b]) => b.requests - a.requests);
@@ -5224,6 +5911,15 @@ const App = {
 
   // ─── Helpers ─────────────────────────────────
   fmtNumber(n) { return Number(n || 0).toLocaleString(); },
+  fmtMoney(n, symbol = '$') {
+    const value = Number(n || 0);
+    if (!Number.isFinite(value)) return '—';
+    const maxDigits = value >= 100 ? 2 : value >= 1 ? 3 : 4;
+    return `${symbol}${value.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: maxDigits,
+    })}`;
+  },
   fmtDuration(secs) {
     const d = Math.floor(secs / 86400), h = Math.floor((secs % 86400) / 3600), m = Math.floor((secs % 3600) / 60);
     const s = Math.floor(secs % 60);

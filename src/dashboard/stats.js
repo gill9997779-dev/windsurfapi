@@ -8,6 +8,8 @@ import { join } from 'path';
 import { config } from '../config.js';
 
 const STATS_FILE = join(config.dataDir, 'stats.json');
+const STATS_PERSIST_DISABLED = process.execArgv.includes('--test')
+  || process.env.WINDSURFAPI_DISABLE_STATS_PERSIST === '1';
 
 const _state = {
   startedAt: Date.now(),
@@ -25,7 +27,7 @@ const _state = {
 
 // Load persisted stats
 try {
-  if (existsSync(STATS_FILE)) {
+  if (!STATS_PERSIST_DISABLED && existsSync(STATS_FILE)) {
     const saved = JSON.parse(readFileSync(STATS_FILE, 'utf-8'));
     Object.assign(_state, saved);
   }
@@ -34,6 +36,7 @@ try {
 // Debounced save
 let _saveTimer = null;
 function scheduleSave() {
+  if (STATS_PERSIST_DISABLED) return;
   clearTimeout(_saveTimer);
   _saveTimer = setTimeout(() => {
     try {
@@ -55,6 +58,11 @@ function emptyUsage() {
     totalTokens: 0,
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
+    cacheWrite5mTokens: 0,
+    cacheWrite1hTokens: 0,
+    localCachePromptTokens: 0,
+    localCacheCompletionTokens: 0,
+    localCacheRequests: 0,
     requestsWithUsage: 0,
   };
 }
@@ -94,38 +102,51 @@ function num(value) {
   return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
 }
 
-function normalizeUsage(usage) {
+function normalizeUsage(usage, meta = {}) {
   if (!usage || typeof usage !== 'object') return emptyUsage();
   const cacheCreation = usage.cache_creation || {};
+  const cacheWrite5m = num(cacheCreation.ephemeral_5m_input_tokens);
+  const cacheWrite1h = num(cacheCreation.ephemeral_1h_input_tokens);
   const cacheWrite = num(usage.cache_creation_input_tokens)
-    || num(cacheCreation.ephemeral_5m_input_tokens) + num(cacheCreation.ephemeral_1h_input_tokens);
+    || cacheWrite5m + cacheWrite1h;
   const cacheRead = num(usage.cache_read_input_tokens)
     || num(usage.prompt_tokens_details?.cached_tokens);
   const promptTokens = num(usage.prompt_tokens ?? usage.input_tokens);
   const completionTokens = num(usage.completion_tokens ?? usage.output_tokens);
   const totalTokens = num(usage.total_tokens) || promptTokens + completionTokens;
+  const localCache = !!meta.cached;
   return {
     promptTokens,
     completionTokens,
     totalTokens,
     cacheReadTokens: cacheRead,
     cacheWriteTokens: cacheWrite,
+    cacheWrite5mTokens: cacheWrite5m,
+    cacheWrite1hTokens: cacheWrite1h,
+    localCachePromptTokens: localCache ? promptTokens : 0,
+    localCacheCompletionTokens: localCache ? completionTokens : 0,
+    localCacheRequests: localCache ? 1 : 0,
     requestsWithUsage: totalTokens || promptTokens || completionTokens || cacheRead || cacheWrite ? 1 : 0,
   };
 }
 
-function addUsage(target, usage) {
+function addUsage(target, usage, meta = {}) {
   const dst = ensureUsage(target);
-  const src = normalizeUsage(usage);
+  const src = normalizeUsage(usage, meta);
   dst.promptTokens += src.promptTokens;
   dst.completionTokens += src.completionTokens;
   dst.totalTokens += src.totalTokens;
   dst.cacheReadTokens += src.cacheReadTokens;
   dst.cacheWriteTokens += src.cacheWriteTokens;
+  dst.cacheWrite5mTokens += src.cacheWrite5mTokens;
+  dst.cacheWrite1hTokens += src.cacheWrite1hTokens;
+  dst.localCachePromptTokens += src.localCachePromptTokens;
+  dst.localCacheCompletionTokens += src.localCacheCompletionTokens;
+  dst.localCacheRequests += src.localCacheRequests;
   dst.requestsWithUsage += src.requestsWithUsage;
 }
 
-function addCounter(target, success, durationMs, usage) {
+function addCounter(target, success, durationMs, usage, meta = {}) {
   ensureCounter(target);
   target.requests++;
   if (success) target.success++;
@@ -135,7 +156,7 @@ function addCounter(target, success, durationMs, usage) {
     target.recentMs.push(durationMs);
     if (target.recentMs.length > 200) target.recentMs.shift();
   }
-  addUsage(target, usage);
+  addUsage(target, usage, meta);
 }
 
 function safeLabel(value, fallback) {
@@ -171,14 +192,14 @@ export function recordRequest(model, success, durationMs, accountId, details = {
   _state.totalRequests++;
   if (success) _state.successCount++;
   else _state.errorCount++;
-  addUsage(_state, details.usage);
+  addUsage(_state, details.usage, details);
 
   // Per-model stats (includes a small ring buffer for p50/p95 latency)
   if (!_state.modelCounts[model]) {
     _state.modelCounts[model] = { requests: 0, success: 0, errors: 0, totalMs: 0, recentMs: [] };
   }
   const mc = _state.modelCounts[model];
-  addCounter(mc, success, durationMs, details.usage);
+  addCounter(mc, success, durationMs, details.usage, details);
 
   // Per-account stats
   if (accountId) {
@@ -187,21 +208,21 @@ export function recordRequest(model, success, durationMs, accountId, details = {
       _state.accountCounts[aid] = { requests: 0, success: 0, errors: 0 };
     }
     const ac = _state.accountCounts[aid];
-    addCounter(ac, success, durationMs, details.usage);
+    addCounter(ac, success, durationMs, details.usage, details);
   }
 
   const meta = callerMeta(details.caller);
   if (!_state.tokenCounts[meta.tokenId]) _state.tokenCounts[meta.tokenId] = { requests: 0, success: 0, errors: 0, totalMs: 0, recentMs: [] };
   setMeta(_state.tokenCounts[meta.tokenId], { label: meta.tokenLabel, tokenLabel: meta.tokenLabel });
-  addCounter(_state.tokenCounts[meta.tokenId], success, durationMs, details.usage);
+  addCounter(_state.tokenCounts[meta.tokenId], success, durationMs, details.usage, details);
 
   if (!_state.deviceCounts[meta.deviceId]) _state.deviceCounts[meta.deviceId] = { requests: 0, success: 0, errors: 0, totalMs: 0, recentMs: [] };
   setMeta(_state.deviceCounts[meta.deviceId], { label: meta.deviceLabel, deviceLabel: meta.deviceLabel, ip: meta.ip, userAgent: meta.userAgent });
-  addCounter(_state.deviceCounts[meta.deviceId], success, durationMs, details.usage);
+  addCounter(_state.deviceCounts[meta.deviceId], success, durationMs, details.usage, details);
 
   if (!_state.projectCounts[meta.project]) _state.projectCounts[meta.project] = { requests: 0, success: 0, errors: 0, totalMs: 0, recentMs: [] };
   setMeta(_state.projectCounts[meta.project], { label: meta.project, project: meta.project });
-  addCounter(_state.projectCounts[meta.project], success, durationMs, details.usage);
+  addCounter(_state.projectCounts[meta.project], success, durationMs, details.usage, details);
 
   // Hourly bucket
   const hourKey = getHourKey();
@@ -214,7 +235,7 @@ export function recordRequest(model, success, durationMs, accountId, details = {
   }
   bucket.requests++;
   if (!success) bucket.errors++;
-  addUsage(bucket, details.usage);
+  addUsage(bucket, details.usage, details);
 
   scheduleSave();
 }

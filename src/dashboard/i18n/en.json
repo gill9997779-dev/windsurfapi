@@ -21,6 +21,8 @@
     "accounts": "Account Pool",
     "bans": "Health Check",
     "models": "Model Control",
+    "pricing": "Model Pricing",
+    "playground": "Model Playground",
     "proxy": "Proxy",
     "logs": "Logs",
     "experimental": "Experimental",
@@ -34,6 +36,8 @@
     "accounts": "Account Pool",
     "bans": "Health Check",
     "models": "Model Control",
+    "pricing": "Model Pricing",
+    "playground": "Model Playground",
     "proxy": "Proxy Config",
     "logs": "Runtime Logs",
     "experimental": "Experimental Features",
@@ -49,6 +53,8 @@
     "windsurf-login": "Login to Windsurf via Google / GitHub / Email to get API Key",
     "accounts": "Manage account pool, probe subscription tiers and available models",
     "models": "Configure model access policies, limit available model scope",
+    "pricing": "Review routed model IDs, cache billing rules, and the current USD to CNY reference rate used by the backend",
+    "playground": "Send a test request to a model from the web UI and inspect both the extracted text and raw JSON response",
     "proxy": "Configure global or per-account exit proxies; each dedicated proxy spawns an independent Language Server instance",
     "logs": "Receive server logs in real-time via SSE streaming",
     "stats": "Request volume, success rate, latency percentiles and account/model dimension stats",
@@ -143,7 +149,8 @@
     "workingDirDirtyHint": "The following files have local changes:<br>{{files}}<br>Continue will overwrite with remote version.",
     "notFetched": "Not fetched",
     "fetchFailed": "Fetch failed",
-    "clickToEditTier": "Click to manually edit tier (use when probe fails)"
+    "clickToEditTier": "Click to manually edit tier (use when probe fails)",
+    "unpriced": "Unpriced"
   },
 
   "tier": {
@@ -204,7 +211,8 @@
     },
     "accountList": {
       "title": "Account List",
-      "desc": "Click probe button to update capability info for a specific account"
+      "desc": "Click probe button to update capability info for a specific account",
+      "summary": "{{total}} accounts total · {{active}} active · {{error}} abnormal · {{disabled}} disabled"
     },
     "modelPolicy": {
       "title": "Access Policy",
@@ -219,6 +227,14 @@
       "search": "Search models...",
       "provider": "Provider"
     },
+    "playgroundRequest": {
+      "title": "Test Request",
+      "desc": "Choose a model, fill in system and user prompts, then send the request to inspect the real model output."
+    },
+    "playgroundResult": {
+      "title": "Response",
+      "desc": "The assistant text is shown first, and the full raw JSON stays below for comparison and debugging."
+    },
     "globalProxy": {
       "title": "Global Proxy",
       "desc": "Accounts without dedicated proxy will use this configuration"
@@ -226,6 +242,10 @@
     "accountProxy": {
       "title": "Per-Account Proxy",
       "desc": "Set dedicated proxy for specific accounts; each dedicated proxy spawns an independent LS instance"
+    },
+    "pricingTable": {
+      "title": "Model Pricing Table",
+      "desc": "List the backend pricing catalog by routed model ID, and distinguish exact rules, reference rows, and models with no public token price."
     },
     "identityInjection": {
       "title": "Model Identity Injection",
@@ -263,7 +283,8 @@
     },
     "modelStats": {
       "title": "Model Usage Statistics",
-      "desc": "Aggregated by model: requests, success count, error count, success rate, avg duration and p50/p95 latency percentiles"
+      "desc": "Aggregated by model: requests, success count, error count, success rate, avg duration and p50/p95 latency percentiles",
+      "pricingNote": "Cost combines official posted rates with nearest-public estimates: standard input, cache read, cache write and output are priced separately and then combined. Current FX: 1 USD ~= {{rate}} CNY ({{source}}, {{date}}). Priced {{priced}} / {{total}} models (Official {{official}} · Estimated {{estimated}}); {{count}} models still have no public token price: {{models}}"
     },
     "accountStats": {
       "title": "Account Dimension Statistics",
@@ -332,6 +353,31 @@
     "searchModel": {
       "label": "Search Model",
       "placeholder": "Enter model name to filter..."
+    },
+    "playgroundModel": {
+      "label": "Model"
+    },
+    "playgroundMaxTokens": {
+      "label": "Max Tokens",
+      "placeholder": "1024"
+    },
+    "playgroundTemperature": {
+      "label": "Temperature",
+      "placeholder": "1.0"
+    },
+    "playgroundSystem": {
+      "label": "System Prompt (Optional)",
+      "placeholder": "Example: You are a strict test assistant and should only return the final answer."
+    },
+    "playgroundPrompt": {
+      "label": "User Prompt",
+      "placeholder": "Enter the prompt you want to test. Press Ctrl/Cmd + Enter to send."
+    },
+    "playgroundOutput": {
+      "label": "Assistant Text"
+    },
+    "playgroundRaw": {
+      "label": "Raw JSON"
     },
     "proxyUser": {
       "placeholder": "Proxy auth username"
@@ -424,6 +470,17 @@
       "avg": "Avg",
       "p50": "p50",
       "p95": "p95",
+      "provider": "Provider",
+      "modelFamily": "Model Family",
+      "match": "Match",
+      "priceInput": "Input",
+      "priceCacheRead": "Cache Read",
+      "priceCacheWrite": "Cache Write",
+      "priceOutput": "Output",
+      "source": "Source",
+      "tokens": "Tokens",
+      "costUsd": "USD",
+      "costCny": "CNY",
       "errorCount": "Error Count",
       "model": "Model",
       "note": "Note"
@@ -436,6 +493,7 @@
       "accountStats": "No account statistics available",
       "banList": "No abnormal accounts",
       "models": "No matching models",
+      "pricing": "No pricing rules available",
       "credits": "Loading...",
       "accountNotFound": "Account not found",
       "noValidAccounts": "No valid accounts available for routing",
@@ -500,6 +558,34 @@
     "p95Latency": {
       "title": "Avg p95 Latency",
       "subtitle": "{{count}} models"
+    },
+    "pricingFx": {
+      "title": "FX Reference",
+      "subtitle": "1 USD to CNY"
+    },
+    "pricingUnit": {
+      "title": "Billing Unit",
+      "subtitle": "USD per 1M tokens"
+    },
+    "pricedFamilies": {
+      "title": "Official Models",
+      "subtitle": "{{count}} providers covered"
+    },
+    "estimatedFamilies": {
+      "title": "Estimated Models",
+      "subtitle": "Mapped from nearest public pricing"
+    },
+    "unpricedFamilies": {
+      "title": "Reference / Unpriced",
+      "subtitle": "{{count}} official sources referenced"
+    },
+    "pricingUsd": {
+      "title": "Estimated Cost USD",
+      "subtitle": "Priced {{priced}} / {{total}} models (Official {{official}} · Estimated {{estimated}})"
+    },
+    "pricingCny": {
+      "title": "Estimated Cost CNY",
+      "subtitle": "FX 1 USD ~= {{rate}} CNY · {{date}}"
     },
     "hitRate": {
       "title": "Hit Rate",
@@ -763,7 +849,28 @@
       "models": {
         "title": "Available Models",
         "available": "available",
-        "blocked": "blocked"
+        "blocked": "blocked",
+        "legend": "Green means usable now; yellow means wait a bit; red means this account is not entitled right now; gray means the latest probe failed or the model was manually blocked.",
+        "status": {
+          "available": "available",
+          "waiting": "waiting",
+          "restricted": "restricted",
+          "failed": "failed",
+          "blocked": "blocked"
+        },
+        "reason": {
+          "blocked": "Manually blocked for this account",
+          "accountStatus": "Account status is {{status}}",
+          "accountRateLimited": "Account-wide rate limit active, wait {{wait}}",
+          "modelRateLimited": "This model is temporarily rate limited, wait {{wait}}",
+          "rpmFull": "This account has reached its RPM limit and will recover automatically",
+          "expired": "This account currently has no usable quota or plan",
+          "notEntitled": "This account is not entitled to use this model",
+          "probeFailed": "The latest model probe failed ({{reason}})",
+          "allowedByUpstream": "Windsurf upstream reported this model as allowed for the account",
+          "allowedByTier": "Allowed by the current account tier",
+          "fallbackRestricted": "No usable entitlement was found for this model right now"
+        }
       },
       "runtime": {
         "title": "Runtime",
@@ -788,6 +895,7 @@
     "importFailed": "Batch import failed",
     "importComplete": "Batch import complete: success {{success}} / failed {{fail}}",
     "success": "Success",
+    "skipped": "Skipped",
     "fail": "Fail",
     "formatError": "Line {{line}} format error"
   },
@@ -885,6 +993,37 @@
     }
   },
 
+  "playground": {
+    "ready": "Pick a model and enter a prompt to start testing.",
+    "running": "Requesting model response...",
+    "success": "Request succeeded",
+    "failed": "Request failed",
+    "promptRequired": "Enter a prompt before sending the test request.",
+    "nothingToCopy": "There is nothing to copy yet.",
+    "copyText": "Copy Text",
+    "copyRaw": "Copy JSON",
+    "outputPlaceholder": "The extracted assistant text will appear here.",
+    "rawPlaceholder": "The raw JSON response will appear here.",
+    "metaEmpty": "After you run a test, this area shows the model, finish reason, and token usage.",
+    "metaModel": "Model {{model}}",
+    "metaFinishReason": "Finish reason {{reason}}",
+    "metaUsage": "Tokens: prompt {{prompt}} / completion {{completion}} / total {{total}}"
+  },
+
+  "pricing": {
+    "note": "Rows marked Official and Estimated are included in spend totals; Reference rows are display-only. Current FX: 1 USD ~= {{rate}} CNY ({{source}}, {{date}}). Official {{exact}}, Estimated {{estimated}}, Reference {{reference}}, Unpriced {{unpriced}}.",
+    "approxCny": "≈ {{amount}}",
+    "cacheWriteTier5m": "5m",
+    "cacheWriteTier1h": "1h",
+    "cacheWriteFallback": "Default",
+    "statusPriced": "Official",
+    "statusEstimated": "Estimated",
+    "statusReference": "Reference",
+    "statusNoPublicPrice": "No Public Price",
+    "statusUnsupported": "Unsupported",
+    "sourceUnavailable": "No source"
+  },
+
   "error": {
     "generic": "An error occurred",
     "unknown": "Unknown error",
@@ -910,6 +1049,8 @@
     "ERR_TEXT_REQUIRED": "Text field is required",
     "ERR_NO_VALID_LINES": "No valid lines found",
     "ERR_FORMAT_INVALID": "Invalid format. Expected: [proxy] email password",
+    "ERR_ACCOUNT_ALREADY_EXISTS": "Account already exists, skipped",
+    "ERR_DUPLICATE_IN_BATCH": "Duplicate account in this batch, skipped",
     "ERR_IDTOKEN_REQUIRED": "ID token is required",
     "ERR_PROXY_PRIVATE_IP": "Proxy cannot point to private/local address",
     "ERR_PROXY_FORMAT_INVALID": "Invalid proxy format. Expected: protocol://[user:pass@]host:port",
@@ -962,7 +1103,9 @@
       "accountId": "Account ID"
     },
     "successTitle": "Login Success",
-    "addedToPool": "and added to account pool"
+    "addedToPool": "and added to account pool",
+    "batchPool": "Account pool: {{before}} before import, {{after}} after import; {{active}} active, {{error}} abnormal",
+    "batchOptions": "Batch strategy: {{delay}}ms between accounts, up to {{retries}} retries for transient failures"
   },
 
   "timeRange": {

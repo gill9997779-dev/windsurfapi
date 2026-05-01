@@ -7,7 +7,7 @@
  */
 
 import https from 'https';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { execSync } from 'child_process';
 import { log } from './config.js';
@@ -49,8 +49,29 @@ function resetCascadeTransportState(port) {
   closeSessionForPort(port);
   const lsEntry = getLsEntryByPort(port);
   if (!lsEntry) return;
+  if (lsEntry.accountStates instanceof Map) lsEntry.accountStates.clear();
   lsEntry.workspaceInit = null;
   lsEntry.sessionId = null;
+}
+
+function accountRuntimeKey(apiKey = '') {
+  return createHash('sha256').update(String(apiKey || '')).digest('hex');
+}
+
+export function workspaceIdForApiKey(apiKey = '') {
+  return accountRuntimeKey(apiKey).slice(0, 12);
+}
+
+export function getOrCreateLsAccountState(lsEntry, apiKey = '') {
+  if (!lsEntry) return null;
+  if (!(lsEntry.accountStates instanceof Map)) lsEntry.accountStates = new Map();
+  const key = accountRuntimeKey(apiKey);
+  let state = lsEntry.accountStates.get(key);
+  if (!state) {
+    state = { sessionId: null, workspaceInit: null };
+    lsEntry.accountStates.set(key, state);
+  }
+  return state;
 }
 
 function isImageLikeBlock(part) {
@@ -248,15 +269,15 @@ export class WindsurfClient {
    */
   rawGetChatMessage(messages, modelEnum, modelName, opts = {}) {
     const { onChunk, onEnd, onError } = opts;
-    // Reuse the LS-scoped session_id instead of letting buildMetadata
-    // mint a fresh UUID on every call. A stable session per LS matches
-    // what a real Windsurf IDE instance sends (one session for the whole
-    // window's lifetime) and gives upstream fingerprinting less to latch
-    // onto. Cascade path already does this via lsEntry.sessionId; this
-    // closes the same gap for the legacy channel.
+    // Reuse the (LS, account)-scoped session_id instead of letting
+    // buildMetadata mint a fresh UUID on every call. A stable session per
+    // account keeps one real editor window's behaviour, but avoids the old
+    // cross-account bleed where multiple apiKeys on the same LS shared one
+    // upstream session identity.
     const lsEntry = getLsEntryByPort(this.port);
-    if (lsEntry && !lsEntry.sessionId) lsEntry.sessionId = randomUUID();
-    const sessionId = lsEntry?.sessionId;
+    const accountState = getOrCreateLsAccountState(lsEntry, this.apiKey);
+    if (accountState && !accountState.sessionId) accountState.sessionId = randomUUID();
+    const sessionId = accountState?.sessionId;
     const proto = buildRawGetChatMessageRequest(this.apiKey, messages, modelEnum, modelName, sessionId);
     const body = grpcFrame(proto);
 
@@ -310,23 +331,24 @@ export class WindsurfClient {
   }
 
   /**
-   * Run (or wait for) the one-shot Cascade workspace init for this LS.
-   * Idempotent — the LS entry caches the in-flight Promise so concurrent
-   * callers share one init round. Safe to call from a startup warmup path
-   * so the first real chat request skips these 3 gRPC round-trips.
+   * Run (or wait for) the one-shot Cascade workspace init for this
+   * (LS, account) pair. Each account gets its own session_id + workspace
+   * state even when multiple accounts share the same LS process.
    */
   warmupCascade(force = false) {
     const lsEntry = getLsEntryByPort(this.port);
     if (!lsEntry) return Promise.resolve();
+    const accountState = getOrCreateLsAccountState(lsEntry, this.apiKey);
+    if (!accountState) return Promise.resolve();
     if (force) {
-      lsEntry.workspaceInit = null;
-      lsEntry.sessionId = randomUUID();
+      accountState.workspaceInit = null;
+      accountState.sessionId = randomUUID();
     }
-    if (!lsEntry.sessionId) lsEntry.sessionId = randomUUID();
-    if (lsEntry.workspaceInit) return lsEntry.workspaceInit;
+    if (!accountState.sessionId) accountState.sessionId = randomUUID();
+    if (accountState.workspaceInit) return accountState.workspaceInit;
 
-    const sessionId = lsEntry.sessionId;
-    const wsId = this.apiKey.slice(0, 8).replace(/[^a-z0-9]/gi, 'x');
+    const sessionId = accountState.sessionId;
+    const wsId = workspaceIdForApiKey(this.apiKey);
     const workspacePath = `/home/user/projects/workspace-${wsId}`;
     const workspaceUri = `file://${workspacePath}`;
 
@@ -337,7 +359,7 @@ export class WindsurfClient {
       throw markCascadeTransportError(new Error(`${stage}: ${err.message}`));
     };
 
-    lsEntry.workspaceInit = (async () => {
+    accountState.workspaceInit = (async () => {
       try {
         const initProto = buildInitializePanelStateRequest(this.apiKey, sessionId);
         await grpcUnary(this.port, this.csrfToken,
@@ -361,10 +383,10 @@ export class WindsurfClient {
       } catch (e) { handleWarmupError('Heartbeat', e); }
       log.info(`Cascade workspace init complete for LS port=${this.port}`);
     })().catch(e => {
-      lsEntry.workspaceInit = null;
+      accountState.workspaceInit = null;
       throw e;
     });
-    return lsEntry.workspaceInit;
+    return accountState.workspaceInit;
   }
 
   // ─── Cascade flow ────────────────────────────────────────
@@ -388,11 +410,13 @@ export class WindsurfClient {
 
     log.debug(`CascadeChat: uid=${modelUid} enum=${modelEnum} msgs=${messages.length} reuse=${!!reuseEntry}`);
 
-    // One-shot per-LS workspace init (idempotent; typically pre-warmed at
-    // LS startup). Falls back to a local session id if the LS entry is gone.
+    // One-shot per-account workspace init (idempotent; typically pre-warmed
+    // at account add/startup). Falls back to a local session id if the LS
+    // entry is gone.
     const lsEntry = getLsEntryByPort(this.port);
+    const accountState = getOrCreateLsAccountState(lsEntry, this.apiKey);
     await this.warmupCascade();
-    let sessionId = reuseEntry?.sessionId || lsEntry?.sessionId || randomUUID();
+    let sessionId = reuseEntry?.sessionId || accountState?.sessionId || randomUUID();
 
     // "panel state not found" means the LS forgot the panel for our sessionId
     // (LS restarted, TTL expired, etc.). Re-run warmupCascade with a fresh
@@ -428,7 +452,7 @@ export class WindsurfClient {
         if (!isPanelMissing(e)) throw e;
         log.warn(`Panel state missing, re-warming LS port=${this.port}`);
         await this.warmupCascade(true);
-        sessionId = getLsEntryByPort(this.port)?.sessionId || randomUUID();
+        sessionId = getOrCreateLsAccountState(getLsEntryByPort(this.port), this.apiKey)?.sessionId || randomUUID();
         reuseEntry = null; // cascade expired — treat as fresh
         cascadeId = await openCascade();
       }
@@ -626,7 +650,7 @@ export class WindsurfClient {
           }
           // Small backoff — LS panel state sometimes needs a moment after Init
           if (panelRetry > 1) await new Promise(r => setTimeout(r, 250 * panelRetry));
-          sessionId = getLsEntryByPort(this.port)?.sessionId || randomUUID();
+          sessionId = getOrCreateLsAccountState(getLsEntryByPort(this.port), this.apiKey)?.sessionId || randomUUID();
           const startProto = buildStartCascadeRequest(this.apiKey, sessionId);
           const startResp = await grpcUnary(
             this.port, this.csrfToken, `${LS_SERVICE}/StartCascade`, grpcFrame(startProto)
@@ -1070,8 +1094,9 @@ export class WindsurfClient {
     );
     const userStatusBytes = extractUserStatusBytes(resp);
     const lsEntry = getLsEntryByPort(this.port);
-    if (lsEntry && !lsEntry.sessionId) lsEntry.sessionId = randomUUID();
-    const sessionId = lsEntry?.sessionId || null;
+    const accountState = getOrCreateLsAccountState(lsEntry, this.apiKey);
+    if (accountState && !accountState.sessionId) accountState.sessionId = randomUUID();
+    const sessionId = accountState?.sessionId || null;
     const panelProto = buildUpdatePanelStateWithUserStatusRequest(this.apiKey, sessionId, userStatusBytes);
     grpcUnary(
       this.port, this.csrfToken,

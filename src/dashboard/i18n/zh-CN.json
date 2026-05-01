@@ -21,6 +21,8 @@
     "accounts": "账号管理",
     "bans": "异常监测",
     "models": "模型控制",
+    "pricing": "模型价格",
+    "playground": "模型测试",
     "proxy": "代理配置",
     "logs": "运行日志",
     "experimental": "实验性功能",
@@ -38,6 +40,8 @@
     "accounts": "账号管理",
     "bans": "异常监测",
     "models": "模型控制",
+    "pricing": "模型价格",
+    "playground": "模型测试",
     "proxy": "代理配置",
     "logs": "运行日志",
     "experimental": "实验性功能",
@@ -49,6 +53,8 @@
     "windsurf-login": "支持 Google / GitHub / 邮箱密码 三种方式登录 Windsurf 获取 API Key",
     "accounts": "维护账号池，探测各账号订阅层级与可用模型",
     "models": "配置模型访问策略，限制可用模型范围",
+    "pricing": "查看后端实际路由模型 ID、缓存计价规则与当前美元兑人民币参考汇率",
+    "playground": "直接在网页里向模型发测试请求，并查看文本结果和原始 JSON 返回",
     "proxy": "全局或按账号配置出口代理，独立代理将启动独立的语言服务器实例",
     "logs": "通过 SSE 实时流式接收服务端日志",
     "stats": "请求量、成功率、延迟分位数与账号/模型维度统计",
@@ -143,7 +149,8 @@
     "workingDirDirtyHint": "以下文件已被修改但未提交：<br>{{files}}<br>继续将用远程版本覆盖这些修改。",
     "notFetched": "尚未获取",
     "fetchFailed": "获取失败",
-    "clickToEditTier": "点击手动修改层级（探测异常时用）"
+    "clickToEditTier": "点击手动修改层级（探测异常时用）",
+    "unpriced": "未定价"
   },
 
   "tier": {
@@ -220,6 +227,14 @@
       "search": "搜索模型...",
       "provider": "供应商"
     },
+    "playgroundRequest": {
+      "title": "测试请求",
+      "desc": "选择模型，填写 system 和 user prompt，点击发送后直接看模型的实际回复"
+    },
+    "playgroundResult": {
+      "title": "返回结果",
+      "desc": "上面显示提取出的 assistant 文本，下面保留完整原始 JSON，方便比对和排查"
+    },
     "globalProxy": {
       "title": "全局代理",
       "desc": "未配置独立代理的账号将使用此配置"
@@ -227,6 +242,10 @@
     "accountProxy": {
       "title": "账号独立代理",
       "desc": "为特定账号设置专属代理；每个独立代理会启动独立 LS 实例"
+    },
+    "pricingTable": {
+      "title": "模型价格表",
+      "desc": "按实际模型名列出当前后端价格目录，并区分官方可精确计价、参考展示和无公开单价三类状态"
     },
     "cascadeReuse": {
       "title": "Cascade 对话复用",
@@ -264,7 +283,8 @@
     },
     "modelStats": {
       "title": "模型使用统计",
-      "desc": "按模型聚合：请求量、成功率、平均耗时与 p50 / p95 延迟分位数"
+      "desc": "按模型聚合：请求量、成功率、平均耗时与 p50 / p95 延迟分位数",
+      "pricingNote": "费用按官方公开单价与最近似估算合并计算：普通输入、缓存读取、缓存写入、输出分别计价后合并。当前汇率 1 USD ≈ {{rate}} CNY（{{source}}，{{date}}）。已计价 {{priced}} / {{total}} 个模型（官方 {{official}} · 估算 {{estimated}}）；未公开单价 {{count}} 个：{{models}}"
     },
     "accountStats": {
       "title": "账号维度统计",
@@ -387,6 +407,31 @@
       "label": "搜索模型",
       "placeholder": "输入模型名称筛选..."
     },
+    "playgroundModel": {
+      "label": "模型"
+    },
+    "playgroundMaxTokens": {
+      "label": "Max Tokens",
+      "placeholder": "1024"
+    },
+    "playgroundTemperature": {
+      "label": "Temperature",
+      "placeholder": "1.0"
+    },
+    "playgroundSystem": {
+      "label": "System Prompt（可选）",
+      "placeholder": "例如：你是一个严格的测试助手，只返回结论。"
+    },
+    "playgroundPrompt": {
+      "label": "User Prompt",
+      "placeholder": "输入你想测试的提示词；支持 Ctrl/Cmd + Enter 直接发送。"
+    },
+    "playgroundOutput": {
+      "label": "Assistant 文本"
+    },
+    "playgroundRaw": {
+      "label": "Raw JSON"
+    },
     "providerFilter": {
       "label": "供应商"
     },
@@ -425,6 +470,17 @@
       "avg": "平均",
       "p50": "p50",
       "p95": "p95",
+      "provider": "供应商",
+      "modelFamily": "模型家族",
+      "match": "匹配规则",
+      "priceInput": "输入",
+      "priceCacheRead": "缓存读取",
+      "priceCacheWrite": "缓存写入",
+      "priceOutput": "输出",
+      "source": "来源",
+      "tokens": "Token",
+      "costUsd": "USD",
+      "costCny": "CNY",
       "errorCount": "错误数",
       "model": "模型",
       "note": "说明"
@@ -443,6 +499,7 @@
       "accountStats": "暂无账号统计数据",
       "banList": "暂无异常账号",
       "models": "没有符合的模型",
+      "pricing": "暂无价格规则",
       "credits": "加载中…"
     }
   },
@@ -501,6 +558,34 @@
     "p95Latency": {
       "title": "平均 p95 延迟",
       "subtitle": "{{count}} 个模型"
+    },
+    "pricingFx": {
+      "title": "汇率参考",
+      "subtitle": "1 USD 对应 CNY"
+    },
+    "pricingUnit": {
+      "title": "计费单位",
+      "subtitle": "USD / 1M tokens"
+    },
+    "pricedFamilies": {
+      "title": "官方定价模型",
+      "subtitle": "覆盖 {{count}} 个供应商"
+    },
+    "estimatedFamilies": {
+      "title": "估算定价模型",
+      "subtitle": "按最接近公开规则映射"
+    },
+    "unpricedFamilies": {
+      "title": "参考 / 未计价",
+      "subtitle": "参考 {{count}} 个官方来源"
+    },
+    "pricingUsd": {
+      "title": "估算成本 USD",
+      "subtitle": "已计价 {{priced}} / {{total}} 个模型（官方 {{official}} · 估算 {{estimated}}）"
+    },
+    "pricingCny": {
+      "title": "估算成本 CNY",
+      "subtitle": "汇率 1 USD ≈ {{rate}} CNY · {{date}}"
     },
     "hitRate": {
       "title": "命中率",
@@ -764,7 +849,28 @@
       "models": {
         "title": "可用模型",
         "available": "可用",
-        "blocked": "已屏蔽"
+        "blocked": "已屏蔽",
+        "legend": "绿色表示可直接用；黄色表示当前要等一会；红色表示这个账号当前无权限；灰色表示最近探测没通过或被手动屏蔽。",
+        "status": {
+          "available": "可用",
+          "waiting": "等待",
+          "restricted": "受限",
+          "failed": "失败",
+          "blocked": "已屏蔽"
+        },
+        "reason": {
+          "blocked": "已被手动屏蔽",
+          "accountStatus": "账号状态为 {{status}}",
+          "accountRateLimited": "账号全局限速中，还需等待 {{wait}}",
+          "modelRateLimited": "该模型临时限速，还需等待 {{wait}}",
+          "rpmFull": "当前账号 RPM 已满，稍后会自动恢复",
+          "expired": "当前账号额度或套餐不可用",
+          "notEntitled": "当前账号没有该模型的访问权限",
+          "probeFailed": "最近一次模型探测未通过（{{reason}}）",
+          "allowedByUpstream": "Windsurf 上游返回该账号可用",
+          "allowedByTier": "按当前账号层级判断可用",
+          "fallbackRestricted": "当前没有发现该模型的可用权限"
+        }
       },
       "runtime": {
         "title": "运行状态",
@@ -885,6 +991,37 @@
       "current": "当前清单 ({{count}})",
       "empty": "清单为空"
     }
+  },
+
+  "playground": {
+    "ready": "选择模型并输入 prompt 后即可测试",
+    "running": "正在请求模型…",
+    "success": "请求成功",
+    "failed": "请求失败",
+    "promptRequired": "请先输入要测试的 prompt",
+    "nothingToCopy": "当前没有可复制的内容",
+    "copyText": "复制文本",
+    "copyRaw": "复制 JSON",
+    "outputPlaceholder": "测试结果会显示在这里",
+    "rawPlaceholder": "原始 JSON 返回会显示在这里",
+    "metaEmpty": "发送一次测试后，这里会显示模型、finish reason 和 token 使用情况。",
+    "metaModel": "模型 {{model}}",
+    "metaFinishReason": "结束原因 {{reason}}",
+    "metaUsage": "Token：prompt {{prompt}} / completion {{completion}} / total {{total}}"
+  },
+
+  "pricing": {
+    "note": "标记为“官方定价”和“估算定价”的行都会计入统计成本；“参考展示”只用于对照查看。当前汇率 1 USD ≈ {{rate}} CNY（{{source}}，{{date}}）。官方 {{exact}} 个，估算 {{estimated}} 个，参考 {{reference}} 个，未计价 {{unpriced}} 个。",
+    "approxCny": "≈ {{amount}}",
+    "cacheWriteTier5m": "5m",
+    "cacheWriteTier1h": "1h",
+    "cacheWriteFallback": "默认",
+    "statusPriced": "官方定价",
+    "statusEstimated": "估算定价",
+    "statusReference": "参考展示",
+    "statusNoPublicPrice": "无公开单价",
+    "statusUnsupported": "未支持",
+    "sourceUnavailable": "无来源"
   },
 
   "error": {

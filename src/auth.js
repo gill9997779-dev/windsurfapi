@@ -19,6 +19,8 @@ import { join } from 'path';
 // one replica survive future restarts and are visible to every replica.
 // See `src/config.js` (sharedDataDir vs dataDir) and issue #67.
 const ACCOUNTS_FILE = join(config.sharedDataDir || config.dataDir, 'accounts.json');
+const ACCOUNTS_PERSIST_DISABLED = process.execArgv.includes('--test')
+  || process.env.WINDSURFAPI_DISABLE_ACCOUNTS_PERSIST === '1';
 
 // ─── Account pool ──────────────────────────────────────────
 
@@ -157,6 +159,7 @@ function _serializeAccounts() {
 }
 
 function saveAccounts() {
+  if (ACCOUNTS_PERSIST_DISABLED) return;
   if (_saveInFlight) { _savePending = true; return; }
   _saveInFlight = true;
   const tempFile = ACCOUNTS_FILE + '.tmp';
@@ -183,6 +186,7 @@ function saveAccounts() {
  * atomic.
  */
 export function saveAccountsSync() {
+  if (ACCOUNTS_PERSIST_DISABLED) return;
   const tempFile = ACCOUNTS_FILE + '.shutdown.tmp';
   try {
     writeFileSync(tempFile, JSON.stringify(_serializeAccounts(), null, 2));
@@ -241,6 +245,7 @@ export function migrateReplicaAccountsTo({ sharedDir, accountsFile, logger = log
 }
 
 function loadAccounts() {
+  if (ACCOUNTS_PERSIST_DISABLED) return;
   try {
     migrateReplicaAccountsTo({
       sharedDir: config.sharedDataDir || config.dataDir,
@@ -293,8 +298,8 @@ async function fetchAndMergeModelCatalog() {
     const { mergeCloudModels } = await import('./models.js');
     const proxy = getEffectiveProxy(acct.id) || null;
     const { configs } = await getCascadeModelConfigs(acct.apiKey, proxy);
-    const added = mergeCloudModels(configs);
-    log.info(`Model catalog: ${configs.length} cloud models, ${added} new entries merged`);
+    const summary = mergeCloudModels(configs);
+    log.info(`Model catalog: ${configs.length} cloud models, ${summary.added} new, ${summary.updated} reconciled, ${summary.defaulted} family defaults updated`);
   } catch (e) {
     log.warn(`Model catalog fetch failed: ${e.message}`);
   }

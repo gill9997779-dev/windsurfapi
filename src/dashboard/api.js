@@ -26,11 +26,13 @@ import { getProxyConfig, getProxyConfigMasked, setGlobalProxy, setAccountProxy, 
 import { MODELS, MODEL_TIER_ACCESS as _TIER_TABLE, getTierModels as _getTierModels, toPublicModelId } from '../models.js';
 import { windsurfLogin, refreshFirebaseToken, reRegisterWithCodeium } from './windsurf-login.js';
 import { getModelAccessConfig, setModelAccessMode, setModelAccessList, addModelToList, removeModelFromList } from './model-access.js';
+import { listModelPricingCatalog, summarizeStatsSpend } from './model-pricing.js';
 import { checkMessageRateLimit } from '../windsurf-api.js';
 import { assertPublicUrlHost } from '../image.js';
 import { validateHostFormat } from '../net-safety.js';
 import { discoverWindsurfCredentials, isLoopbackAddress } from './local-windsurf.js';
 import { detectDockerSelfUpdate, runDockerSelfUpdate } from './docker-self-update.js';
+import { handleChatCompletions } from '../handlers/chat.js';
 
 export function parseProxyUrl(proxy) {
   const proxyParts = String(proxy).match(/^(?:(\w+):\/\/)?(?:([^:]+):([^@]+)@)?([^:]+):(\d+)$/);
@@ -138,6 +140,8 @@ const batchLoginDefaults = {
   retries: 3,
 };
 
+let playgroundChatHandler = handleChatCompletions;
+
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -148,6 +152,44 @@ function clampInt(value, fallback, min, max) {
   return Math.max(min, Math.min(max, n));
 }
 
+function clampNumber(value, fallback, min, max) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
+export function extractPlaygroundResponseText(responseBody) {
+  const content = responseBody?.choices?.[0]?.message?.content;
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === 'string') return part;
+        if (typeof part?.text === 'string') return part.text;
+        if (typeof part?.content === 'string') return part.content;
+        return '';
+      })
+      .filter(Boolean)
+      .join('\n');
+  }
+  if (typeof responseBody?.output_text === 'string') return responseBody.output_text;
+  return '';
+}
+
+function buildPlaygroundStatsContext(requestId) {
+  const shortId = String(requestId || 'playground').slice(0, 24);
+  return {
+    tokenId: 'dashboard-playground',
+    tokenLabel: 'dashboard-playground',
+    deviceId: `device:${shortId}`,
+    deviceLabel: 'dashboard playground',
+    ip: '127.0.0.1',
+    userAgent: 'dashboard playground',
+    project: 'dashboard-playground',
+    network: 'local',
+  };
+}
+
 function normalizeBatchEmail(value) {
   const email = String(value || '').trim().toLowerCase();
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '';
@@ -155,21 +197,13 @@ function normalizeBatchEmail(value) {
 
 export function shouldSkipDuplicateBatchEmail(seenEmails, email, autoAdd = true) {
   const normalizedEmail = normalizeBatchEmail(email);
-  if (autoAdd === false || !normalizedEmail) return { skip: false, normalizedEmail };
-  if (seenEmails.has(normalizedEmail)) return { skip: true, normalizedEmail };
+  // Batch imports now always attempt the upstream login first. Real account
+  // dedupe happens after login in addAccountByKey(), where we have the
+  // returned apiKey + canonical email and can merge accurately instead of
+  // pre-emptively skipping later rows by guessed email identity.
+  if (!normalizedEmail || autoAdd === false) return { skip: false, normalizedEmail };
   seenEmails.add(normalizedEmail);
   return { skip: false, normalizedEmail };
-}
-
-function skippedBatchResult(index, email, error, account = null) {
-  return {
-    success: false,
-    skipped: true,
-    index,
-    email,
-    error,
-    account: account ? { id: account.id, email: account.email, status: account.status } : null,
-  };
 }
 
 function isTransientLoginError(err) {
@@ -621,7 +655,18 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
 
   // ─── Stats ────────────────────────────────────────────
   if (subpath === '/stats' && method === 'GET') {
-    return json(res, 200, getStats());
+    const stats = getStats();
+    const pricing = summarizeStatsSpend(stats);
+    return json(res, 200, {
+      ...stats,
+      modelCounts: pricing.modelCounts,
+      pricingSummary: pricing.pricingSummary,
+      pricingFx: pricing.pricingFx,
+    });
+  }
+
+  if (subpath === '/pricing' && method === 'GET') {
+    return json(res, 200, listModelPricingCatalog());
   }
 
   if (subpath === '/stats' && method === 'DELETE') {
@@ -879,6 +924,64 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     return json(res, 200, { models });
   }
 
+  if (subpath === '/playground/chat' && method === 'POST') {
+    if (!isAuthenticated()) {
+      return json(res, 503, {
+        success: false,
+        error: 'No active accounts. Add an account before testing models.',
+      });
+    }
+
+    const model = String(body?.model || config.defaultModel || '').trim();
+    const prompt = String(body?.prompt || '').trim();
+    const system = String(body?.system || '').trim();
+    const maxTokens = clampInt(body?.maxTokens, 1024, 1, 16384);
+    const temperature = body?.temperature == null || body?.temperature === ''
+      ? undefined
+      : clampNumber(body.temperature, 1, 0, 2);
+
+    if (!model) return json(res, 400, { success: false, error: 'model is required' });
+    if (!prompt) return json(res, 400, { success: false, error: 'prompt is required' });
+
+    const messages = [];
+    if (system) messages.push({ role: 'system', content: system });
+    messages.push({ role: 'user', content: prompt });
+
+    const requestBody = {
+      model,
+      messages,
+      stream: false,
+      max_tokens: maxTokens,
+    };
+    if (temperature !== undefined) requestBody.temperature = temperature;
+
+    const requestId = `dashboard-playground-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const result = await playgroundChatHandler(requestBody, {
+      callerKey: `session:${requestId}`,
+      statsContext: buildPlaygroundStatsContext(requestId),
+    });
+
+    if (result?.stream) {
+      return json(res, 500, { success: false, error: 'playground_stream_unsupported' });
+    }
+
+    const responseBody = result?.body || {};
+    const payload = {
+      success: (result?.status || 500) < 400,
+      model: responseBody?.model || model,
+      text: extractPlaygroundResponseText(responseBody),
+      usage: responseBody?.usage || null,
+      finishReason: responseBody?.choices?.[0]?.finish_reason || null,
+      response: responseBody,
+    };
+
+    if ((result?.status || 500) >= 400) {
+      const error = responseBody?.error?.message || responseBody?.error || 'playground_request_failed';
+      return json(res, result.status, { ...payload, success: false, error });
+    }
+    return json(res, 200, payload);
+  }
+
   // ─── Model Access Control ──────────────────────────────
   if (subpath === '/model-access' && method === 'GET') {
     return json(res, 200, getModelAccessConfig());
@@ -923,17 +1026,10 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       const retries = clampInt(body?.retries, batchLoginDefaults.retries, 0, 5);
       const beforeAccounts = getAccountCount();
       const results = [];
-      const seenEmails = new Set();
       let loginAttempts = 0;
       for (const acct of accounts) {
         const email = String(acct?.email || '').trim();
         const password = String(acct?.password || '').trim();
-        const index = results.length + 1;
-        const duplicate = shouldSkipDuplicateBatchEmail(seenEmails, email, autoAdd);
-        if (duplicate.skip) {
-          results.push(skippedBatchResult(index, email, 'ERR_DUPLICATE_IN_BATCH'));
-          continue;
-        }
         if (loginAttempts > 0 && delayMs > 0) await sleep(delayMs);
         loginAttempts++;
         try {
@@ -984,7 +1080,6 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       const retries = clampInt(body?.retries, batchLoginDefaults.retries, 0, 5);
       const beforeAccounts = getAccountCount();
       const results = [];
-      const seenEmails = new Set();
       let loginAttempts = 0;
       for (const line of lines) {
         const parts = line.split(/\s+/);
@@ -998,12 +1093,6 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
           password = parts[1];
         } else {
           results.push({ success: false, email: line.slice(0, 30), error: 'ERR_FORMAT_INVALID' });
-          continue;
-        }
-        const index = results.length + 1;
-        const duplicate = shouldSkipDuplicateBatchEmail(seenEmails, email, autoAdd);
-        if (duplicate.skip) {
-          results.push(skippedBatchResult(index, email, 'ERR_DUPLICATE_IN_BATCH'));
           continue;
         }
         if (loginAttempts > 0 && delayMs > 0) await sleep(delayMs);
@@ -1135,6 +1224,10 @@ let gitExecFileForTest = null;
 
 export function setGitExecFileForTest(execFile) {
   gitExecFileForTest = execFile;
+}
+
+export function setPlaygroundChatHandlerForTest(fn) {
+  playgroundChatHandler = fn || handleChatCompletions;
 }
 
 function makeSelfUpdateUnavailableError() {

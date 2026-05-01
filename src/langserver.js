@@ -322,6 +322,9 @@ export async function ensureLs(proxy = null) {
       // trio only runs once per LS lifetime instead of once per request.
       workspaceInit: null,
       sessionId: null,
+      // Per-account runtime state for callers sharing the same LS process.
+      // Each apiKey gets its own sessionId + workspace init.
+      accountStates: new Map(),
     };
     _pool.set(key, entry);
 
@@ -384,8 +387,8 @@ export function getLsFor(proxy) {
 
 /**
  * Look up an LS pool entry by its gRPC port. Used by WindsurfClient so it
- * can attach per-LS state (one-shot cascade workspace init, persistent
- * sessionId) without plumbing the entry through every call site.
+ * can attach per-LS / per-account runtime state without plumbing the entry
+ * through every call site.
  */
 export function getLsEntryByPort(port) {
   for (const entry of _pool.values()) {
