@@ -6,8 +6,8 @@
 import { createHash, randomUUID } from 'crypto';
 import { WindsurfClient, contentToString, isCascadeTransportError } from '../client.js';
 import { getApiKey, acquireAccountByKey, releaseAccount, getAccountAvailability, reportError, reportSuccess, markRateLimited, reportInternalError, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, refundReservation } from '../auth.js';
-import { resolveModel, getModelInfo } from '../models.js';
-import { getLsFor, ensureLs } from '../langserver.js';
+import { SERVICE_MODEL_ALLOWLIST, resolveModel, getModelInfo, isServiceModelAllowed } from '../models.js';
+import { ensureAccountLs } from '../langserver.js';
 import { config, log } from '../config.js';
 import { recordRequest } from '../dashboard/stats.js';
 import { isModelAllowed } from '../dashboard/model-access.js';
@@ -1082,6 +1082,19 @@ export async function handleChatCompletions(body, context = {}) {
       },
     };
   }
+  if (!isServiceModelAllowed(routingModelKey)) {
+    return {
+      status: 400,
+      body: {
+        error: {
+          message: `当前服务仅开放模型：${SERVICE_MODEL_ALLOWLIST.join(', ')}`,
+          type: 'invalid_request_error',
+          param: 'model',
+          code: 'model_not_allowed',
+        },
+      },
+    };
+  }
   // Return the user's original model name in response.model / response headers
   // so external test harnesses (e.g. hvoy.ai "model signature" check) see
   // exactly what they sent, not a Windsurf-internal alias like
@@ -1443,8 +1456,8 @@ export async function handleChatCompletions(body, context = {}) {
       }
     }
 
-    await ensureLs(acct.proxy);
-    const ls = getLsFor(acct.proxy);
+    let ls = null;
+    try { ls = await ensureAccountLs(acct, acct.proxy); } catch (e) { lastErr = { status: 503, body: { error: { message: e.message, type: 'ls_unavailable' } } }; break; }
     if (!ls) { lastErr = { status: 503, body: { error: { message: 'No LS instance available', type: 'ls_unavailable' } } }; break; }
     // Cascade pins cascade_id to a specific LS port too; if the LS it was
     // born on has been replaced, the cascade_id is dead.
@@ -1548,9 +1561,10 @@ export async function handleChatCompletions(body, context = {}) {
       headers: { 'Retry-After': String(retryAfterSec) },
       body: {
         error: {
-          message: `${displayModel} 所有账号暂时不可用，请 ${retryAfterSec} 秒后重试`,
+          message: `${displayModel} 所有账号暂时不可用，请 ${retryAfterSec} 秒后重试；如果仍然失败，请手动切换 IP/代理后再试`,
           type: 'rate_limit_exceeded',
           retry_after_ms: temporaryUnavailable.retryAfterMs,
+          action_required: 'manual_ip_switch',
         },
       },
     };
@@ -1563,7 +1577,7 @@ export async function handleChatCompletions(body, context = {}) {
         log.info(`Chat[${reqId}]: restored checked-out cascade after rate limit`);
       }
       const retryAfterSec = Math.ceil(rl.retryAfterMs / 1000);
-      return { status: 429, headers: { 'Retry-After': String(retryAfterSec) }, body: { error: { message: `${displayModel} 所有账号均已达速率限制，请 ${retryAfterSec} 秒后重试`, type: 'rate_limit_exceeded', retry_after_ms: rl.retryAfterMs } } };
+      return { status: 429, headers: { 'Retry-After': String(retryAfterSec) }, body: { error: { message: `${displayModel} 所有账号均已达速率限制，请 ${retryAfterSec} 秒后重试；如果仍然失败，请手动切换 IP/代理后再试`, type: 'rate_limit_exceeded', retry_after_ms: rl.retryAfterMs, action_required: 'manual_ip_switch' } } };
     }
   }
   if (!reuseEntryDead && checkedOutReuseEntry && fpBefore) {
@@ -2106,8 +2120,8 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             }
           }
 
-          try { await ensureLs(acct.proxy); } catch (e) { lastErr = e; break; }
-          const ls = getLsFor(acct.proxy);
+          let ls = null;
+          try { ls = await ensureAccountLs(acct, acct.proxy); } catch (e) { lastErr = e; break; }
           if (!ls) { lastErr = new Error('No LS instance available'); break; }
           if (reuseEntry && reuseEntry.lsPort !== ls.port) {
             log.info(`Chat[${reqId}]: reuse MISS — LS port changed`);

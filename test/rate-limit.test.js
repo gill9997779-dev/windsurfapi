@@ -15,6 +15,7 @@ import { getExperimental, setExperimental } from '../src/runtime-config.js';
 
 const createdAccountIds = [];
 const originalExperimental = getExperimental();
+const TEST_MODEL = 'gpt-5.5-high';
 
 function addTestAccount(label = 'test-account') {
   const account = addAccountByKey(`test-key-${Date.now()}-${Math.random().toString(36).slice(2)}`, label);
@@ -36,7 +37,7 @@ describe('rate-limit handling', () => {
     setExperimental({ preflightRateLimit: true });
 
     const request = {
-      model: 'gemini-2.5-flash',
+      model: TEST_MODEL,
       messages: [{ role: 'user', content: 'hi' }],
     };
     const context = {
@@ -90,7 +91,7 @@ describe('rate-limit handling', () => {
 
   it('does not extend an existing cooldown when a later 429 arrives for the same model', async () => {
     const account = addTestAccount('max-extend');
-    const modelKey = 'gemini-2.5-flash';
+    const modelKey = TEST_MODEL;
 
     markRateLimited(account.apiKey, 2000, modelKey);
     const firstUntil = getAccountList().find(a => a.id === account.id).modelRateLimits[modelKey];
@@ -104,7 +105,7 @@ describe('rate-limit handling', () => {
 
   it('surfaces real model cooldown expiries in account list state', () => {
     const account = addTestAccount('real-expiry');
-    const modelKey = 'gemini-2.5-flash';
+    const modelKey = TEST_MODEL;
     const now = Date.now();
 
     markRateLimited(account.apiKey, 1200, modelKey);
@@ -116,16 +117,16 @@ describe('rate-limit handling', () => {
 
   it('returns 429 when every eligible account is locally RPM-exhausted', async () => {
     const account = addTestAccount('rpm-full');
-    setAccountTier(account.id, 'free');
+    setAccountTier(account.id, 'pro');
 
-    for (let i = 0; i < 10; i++) {
-      const checkedOut = getApiKey([], 'gemini-2.5-flash');
+    for (let i = 0; i < 60; i++) {
+      const checkedOut = getApiKey([], TEST_MODEL);
       assert.equal(checkedOut?.apiKey, account.apiKey);
       releaseAccount(account.apiKey);
     }
 
     const result = await handleChatCompletions({
-      model: 'gemini-2.5-flash',
+      model: TEST_MODEL,
       messages: [{ role: 'user', content: 'hi' }],
     }, {
       async waitForAccount() {
@@ -143,7 +144,7 @@ describe('rate-limit handling', () => {
     setExperimental({ preflightRateLimit: true });
 
     const result = await handleChatCompletions({
-      model: 'gemini-2.5-flash',
+      model: TEST_MODEL,
       messages: [{ role: 'user', content: 'hi' }],
     }, {
       async checkMessageRateLimit() {

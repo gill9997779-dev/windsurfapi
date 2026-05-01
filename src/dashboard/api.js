@@ -15,7 +15,6 @@ import {
   setAccountBlockedModels, setAccountTokens, setAccountTier,
   getAccountInternal, isLocalBindHost, maskApiKey, safeEqualString,
 } from '../auth.js';
-import { restartLsForProxy } from '../langserver.js';
 import { getLsStatus, stopLanguageServer, startLanguageServer, isLanguageServerRunning } from '../langserver.js';
 import { getStats, resetStats, recordRequest } from './stats.js';
 import { cacheStats, cacheClear } from '../cache.js';
@@ -23,7 +22,7 @@ import { getExperimental, setExperimental, getSystemPrompts, setSystemPrompts, r
 import { poolStats as convPoolStats, poolClear as convPoolClear } from '../conversation-pool.js';
 import { getLogs, subscribeToLogs, unsubscribeFromLogs } from './logger.js';
 import { getProxyConfig, getProxyConfigMasked, setGlobalProxy, setAccountProxy, removeProxy, getEffectiveProxy } from './proxy-config.js';
-import { MODELS, MODEL_TIER_ACCESS as _TIER_TABLE, getTierModels as _getTierModels, toPublicModelId } from '../models.js';
+import { MODELS, MODEL_TIER_ACCESS as _TIER_TABLE, SERVICE_MODEL_ALLOWLIST, getTierModels as _getTierModels, toPublicModelId } from '../models.js';
 import { windsurfLogin, refreshFirebaseToken, reRegisterWithCodeium } from './windsurf-login.js';
 import { getModelAccessConfig, setModelAccessMode, setModelAccessList, addModelToList, removeModelFromList } from './model-access.js';
 import { listModelPricingCatalog, summarizeStatsSpend } from './model-pricing.js';
@@ -869,7 +868,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     // through the live list catches per-account proxies as well as the
     // default no-proxy LS. Errors during restart get surfaced so the user
     // knows whether they need to bounce the container.
-    const { _poolKeys, restartLsForProxy: doRestart, getProxyByKey } =
+    const { _poolKeys, restartLsByKey: doRestart } =
       await import('../langserver.js');
     let restarted = 0;
     let restartErrors = [];
@@ -877,8 +876,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       const keys = typeof _poolKeys === 'function' ? _poolKeys() : ['default'];
       for (const key of keys) {
         try {
-          const proxy = typeof getProxyByKey === 'function' ? getProxyByKey(key) : null;
-          await doRestart(proxy);
+          await doRestart(key);
           restarted++;
         } catch (e) {
           restartErrors.push(`${key}: ${e.message}`);
@@ -917,8 +915,9 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
 
   // ─── Models list ──────────────────────────────────────
   if (subpath === '/models' && method === 'GET') {
-    const models = Object.entries(MODELS).map(([id, info]) => ({
-      id, name: info.name, provider: info.provider,
+    const models = SERVICE_MODEL_ALLOWLIST.map(id => [id, MODELS[id]]).filter(([, info]) => info).map(([id, info]) => ({
+      id: toPublicModelId(id), name: toPublicModelId(id), provider: info.provider,
+      _windsurf_id: id,
       credit: typeof info.credit === 'number' ? info.credit : null,
     }));
     return json(res, 200, { models });

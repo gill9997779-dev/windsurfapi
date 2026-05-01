@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { migrateReplicaAccountsTo } from '../src/auth.js';
+import { migrateLegacyAccountsTo, migrateReplicaAccountsTo, shouldSkipEmptyAccountsWrite } from '../src/auth.js';
 
 // Issue #67 — `accounts.json` used to live under per-replica `dataDir`
 // (replica-${HOSTNAME}/), so each docker-compose upgrade orphaned the
@@ -121,5 +121,75 @@ describe('migrateReplicaAccountsTo (issue #67)', () => {
     });
     assert.equal(r.migrated, 0);
     assert.equal(r.skipped, true);
+  });
+});
+
+describe('account persistence guard', () => {
+  it('refuses accidental empty overwrite of a non-empty accounts file', () => {
+    assert.equal(shouldSkipEmptyAccountsWrite({
+      accountCount: 0,
+      allowEmptyAccountSave: false,
+      existingParseOk: true,
+      existingCount: 2,
+    }), true);
+  });
+
+  it('allows explicit removal of the final account to persist an empty file', () => {
+    assert.equal(shouldSkipEmptyAccountsWrite({
+      accountCount: 0,
+      allowEmptyAccountSave: true,
+      existingParseOk: true,
+      existingCount: 2,
+    }), false);
+  });
+
+  it('refuses empty overwrite when the existing accounts file is corrupt', () => {
+    assert.equal(shouldSkipEmptyAccountsWrite({
+      accountCount: 0,
+      allowEmptyAccountSave: false,
+      existingParseOk: false,
+      existingCount: 0,
+    }), true);
+  });
+});
+
+describe('migrateLegacyAccountsTo', () => {
+  let tmp;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'wfapi-legacy-mig-'));
+  });
+
+  afterEach(() => {
+    try { rmSync(tmp, { recursive: true, force: true }); } catch {}
+  });
+
+  it('migrates a non-empty legacy accounts file into an empty target path', () => {
+    const legacyFile = join(tmp, 'accounts.json');
+    const accountsFile = join(tmp, 'data', 'accounts.json');
+    writeFileSync(legacyFile, JSON.stringify([{ apiKey: 'k1', email: 'a@b.com' }]));
+
+    const r = migrateLegacyAccountsTo({ legacyFile, accountsFile, logger: silentLogger });
+
+    assert.equal(r.migrated, 1);
+    assert.equal(r.skipped, false);
+    const out = JSON.parse(readFileSync(accountsFile, 'utf-8'));
+    assert.equal(out.length, 1);
+    assert.equal(out[0].apiKey, 'k1');
+  });
+
+  it('does not overwrite an existing non-empty target accounts file', () => {
+    const legacyFile = join(tmp, 'accounts.json');
+    const accountsFile = join(tmp, 'data', 'accounts.json');
+    mkdirSync(join(tmp, 'data'));
+    writeFileSync(legacyFile, JSON.stringify([{ apiKey: 'legacy' }]));
+    writeFileSync(accountsFile, JSON.stringify([{ apiKey: 'target' }]));
+
+    const r = migrateLegacyAccountsTo({ legacyFile, accountsFile, logger: silentLogger });
+
+    assert.equal(r.migrated, 0);
+    assert.equal(r.skipped, true);
+    const out = JSON.parse(readFileSync(accountsFile, 'utf-8'));
+    assert.equal(out[0].apiKey, 'target');
   });
 });

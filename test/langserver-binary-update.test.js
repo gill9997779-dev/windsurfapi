@@ -72,12 +72,12 @@ describe('LS binary update endpoint (#7/#10/#49/#87)', () => {
     const route = m[0];
     assert.match(route, /_poolKeys/,
       'must enumerate all live LS pool keys (default + per-proxy entries)');
-    assert.match(route, /restartLsForProxy/,
-      'must call restartLsForProxy on each entry to swap the binary in flight');
+    assert.match(route, /restartLsByKey/,
+      'must call restartLsByKey on each entry to swap the binary in flight');
   });
 
-  test('langserver.js exports _poolKeys + getProxyByKey for the update endpoint', () => {
+  test('langserver.js exports _poolKeys + restartLsByKey for the update endpoint', () => {
     assert.match(LS_JS, /export function _poolKeys\(\)/);
-    assert.match(LS_JS, /export function getProxyByKey\(key\)/);
+    assert.match(LS_JS, /export async function restartLsByKey\(key\)/);
   });
 });

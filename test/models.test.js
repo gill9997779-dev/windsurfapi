@@ -15,6 +15,10 @@ describe('resolveModel', () => {
     assert.equal(resolveModel('gpt5.5'), 'gpt-5.5');
     assert.equal(resolveModel('gpt-5-5'), 'gpt-5.5');
     assert.equal(resolveModel('gpt-5-5-xhigh'), 'gpt-5.5-xhigh');
+    assert.equal(resolveModel('gp5.5'), 'gpt-5.5-high');
+    assert.equal(resolveModel('gp5.5-xhigh'), 'gpt-5.5-xhigh');
+    assert.equal(resolveModel('gp55'), 'gpt-5.5-high');
+    assert.equal(resolveModel('gp55xhigh'), 'gpt-5.5-xhigh');
     assert.equal(resolveModel('w5.5'), 'gpt-5.5');
     assert.equal(resolveModel('w5.5-xhigh'), 'gpt-5.5-xhigh');
     assert.equal(getModelInfo('gpt-5.5')?.modelUid, 'gpt-5-5-medium');
@@ -23,10 +27,12 @@ describe('resolveModel', () => {
 
   it('exposes w-prefixed public model names', () => {
     assert.equal(toPublicModelId('gpt-5.5'), 'w5.5');
+    assert.equal(toPublicModelId('gpt-5.5-high'), 'gp55');
+    assert.equal(toPublicModelId('gpt-5.5-xhigh'), 'gp55xhigh');
     assert.equal(toPublicModelId('claude-4.5-sonnet-thinking'), 'w4.5-sonnet-thinking');
     const ids = listModels().map(m => m.id);
-    assert.ok(ids.includes('w5.5'));
-    assert.ok(ids.includes('w4.5-sonnet-thinking'));
+    assert.ok(ids.includes('gp55'));
+    assert.ok(ids.includes('gp55xhigh'));
     assert.equal(new Set(ids).size, ids.length);
   });
 

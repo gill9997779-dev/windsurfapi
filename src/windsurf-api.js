@@ -63,6 +63,11 @@ function isProxyError(err) {
   return /Proxy CONNECT failed|Proxy tunnel|Proxy connection/i.test(m);
 }
 
+export function proxyModesFor(proxy) {
+  if (!proxy) return [null];
+  return process.env.WINDSURFAPI_PROXY_DIRECT_FALLBACK === '1' ? [proxy, null] : [proxy];
+}
+
 function postJson(host, path, body, proxy) {
   return new Promise(async (resolve, reject) => {
     const postData = JSON.stringify(body);
@@ -135,8 +140,7 @@ export async function getUserStatus(apiKey, proxy = null) {
     },
   };
 
-  // Try with proxy first, then retry direct if proxy itself fails (407 etc.).
-  const proxyModes = proxy ? [proxy, null] : [null];
+  const proxyModes = proxyModesFor(proxy);
   let lastErr = null;
   for (const px of proxyModes) {
     for (const host of SERVER_HOSTS) {
@@ -235,7 +239,7 @@ function buildMetadata(apiKey) {
 export async function getCascadeModelConfigs(apiKey, proxy = null) {
   const body = { metadata: buildMetadata(apiKey) };
 
-  const proxyModes = proxy ? [proxy, null] : [null];
+  const proxyModes = proxyModesFor(proxy);
   let lastErr = null;
   for (const px of proxyModes) {
     for (const host of SERVER_HOSTS) {
@@ -272,7 +276,7 @@ export async function getCascadeModelConfigs(apiKey, proxy = null) {
 export async function checkMessageRateLimit(apiKey, proxy = null) {
   const body = { metadata: buildMetadata(apiKey) };
 
-  const proxyModes = proxy ? [proxy, null] : [null];
+  const proxyModes = proxyModesFor(proxy);
   let lastErr = null;
   for (const px of proxyModes) {
     for (const host of SERVER_HOSTS) {

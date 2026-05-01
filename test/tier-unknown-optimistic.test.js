@@ -11,7 +11,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { MODEL_TIER_ACCESS, getTierModels, listModels } from '../src/models.js';
+import { MODEL_TIER_ACCESS, SERVICE_MODEL_ALLOWLIST, getTierModels, listModels } from '../src/models.js';
 
 describe('MODEL_TIER_ACCESS.unknown optimistic (QQ-group 2026-04-30 race)', () => {
   it('unknown tier returns the FULL pro catalog (not just gemini-2.5-flash)', () => {
@@ -63,5 +63,10 @@ describe('MODEL_TIER_ACCESS.unknown optimistic (QQ-group 2026-04-30 race)', () =
     // unknown is keys, catalog drops deprecated. unknown should be >= catalog.
     assert.ok(unknown >= catalog,
       `unknown tier must include all non-deprecated catalog (got unknown=${unknown}, catalog=${catalog})`);
+  });
+
+  it('service catalog exposes only GPT-5.5 high and xhigh', () => {
+    const ids = listModels().map(m => m._windsurf_id).sort();
+    assert.deepEqual(ids, [...SERVICE_MODEL_ALLOWLIST].sort());
   });
 });

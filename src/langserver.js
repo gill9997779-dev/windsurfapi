@@ -13,7 +13,7 @@ import { mkdirSync } from 'fs';
 import { existsSync } from 'fs';
 import http2 from 'http2';
 import net from 'net';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { resolve } from 'path';
 import { log } from './config.js';
 import { closeSessionForPort } from './grpc.js';
@@ -34,14 +34,36 @@ let _nextPort = DEFAULT_PORT + 1;
 let _binaryPath = DEFAULT_BINARY;
 let _apiServerUrl = DEFAULT_API_URL;
 
-function proxyKey(proxy) {
+function normalizedProxyType(proxy) {
+  const raw = String(proxy?.type || 'http').toLowerCase();
+  return (raw === 'socks' ? 'socks5' : raw).replace(/[^a-z0-9+.-]/g, '') || 'http';
+}
+
+export function proxyKey(proxy) {
   if (!proxy || !proxy.host) return 'default';
-  // Sanitize to [A-Za-z0-9_] — the key flows into a filesystem path
-  // (`${LS_DATA_DIR}/${key}`) and a shell-quoted mkdir, so strip any
-  // special character that could slip past execSync's naive quoting.
+  const type = normalizedProxyType(proxy);
   const safeHost = proxy.host.replace(/[^a-zA-Z0-9]/g, '_');
   const safePort = String(proxy.port || 8080).replace(/[^0-9]/g, '');
-  return `px_${safeHost}_${safePort}`;
+  const authHash = createHash('sha256').update(JSON.stringify({
+    type,
+    host: String(proxy.host || '').toLowerCase(),
+    port: String(proxy.port || 8080),
+    username: String(proxy.username || ''),
+    password: String(proxy.password || ''),
+  })).digest('hex').slice(0, 12);
+  return `px_${type.replace(/[^a-zA-Z0-9]/g, '_')}_${safeHost}_${safePort}_${authHash}`;
+}
+
+function safeKeyPart(value) {
+  return String(value || '').trim().replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64);
+}
+
+export function accountLsKey(account = {}) {
+  const id = safeKeyPart(account.id);
+  if (id) return `acct_${id}`;
+  const raw = String(account.apiKey || account.email || '');
+  const hash = createHash('sha256').update(raw).digest('hex').slice(0, 16);
+  return `acct_${hash}`;
 }
 
 function dataDirForKey(key) {
@@ -51,12 +73,13 @@ function dataDirForKey(key) {
   return `${root}/${key}`;
 }
 
-function proxyUrl(proxy) {
+export function proxyUrl(proxy) {
   if (!proxy || !proxy.host) return null;
+  const type = normalizedProxyType(proxy);
   const auth = proxy.username
     ? `${encodeURIComponent(proxy.username)}:${encodeURIComponent(proxy.password || '')}@`
     : '';
-  return `http://${auth}${proxy.host}:${proxy.port || 8080}`;
+  return `${type}://${auth}${proxy.host}:${proxy.port || 8080}`;
 }
 
 // Pass only what the LS binary actually needs to its child env. Forwarding
@@ -66,8 +89,8 @@ function proxyUrl(proxy) {
 // vars that the LS reads to dial out.
 const LS_ENV_ALLOWLIST = [
   'HOME', 'PATH', 'LANG', 'LC_ALL', 'TMPDIR', 'TMP', 'TEMP',
-  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY',
-  'http_proxy', 'https_proxy', 'no_proxy',
+  'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY',
+  'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy',
   // SSL trust roots — without these LS can fail to verify the upstream
   // Codeium endpoint on hardened hosts.
   'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS',
@@ -86,8 +109,10 @@ export function buildLanguageServerEnv(source = process.env, options = {}) {
   if (pUrl) {
     env.HTTPS_PROXY = pUrl;
     env.HTTP_PROXY = pUrl;
+    env.ALL_PROXY = pUrl;
     env.https_proxy = pUrl;
     env.http_proxy = pUrl;
+    env.all_proxy = pUrl;
   }
   return env;
 }
@@ -182,9 +207,22 @@ async function waitPortReady(port, timeoutMs = 20000) {
  * Idempotent — returns the existing entry if one is already running.
  */
 export async function ensureLs(proxy = null) {
-  const key = proxyKey(proxy);
+  return ensureLsEntry(proxyKey(proxy), proxy);
+}
+
+async function ensureLsEntry(key, proxy = null, meta = {}) {
+  const desiredProxyKey = proxyKey(proxy);
   const existing = _pool.get(key);
-  if (existing && existing.ready) return existing;
+  if (existing && existing.ready) {
+    if (existing.proxyKey === desiredProxyKey) return existing;
+    try { existing.process?.kill('SIGTERM'); } catch {}
+    if (existing?.port) {
+      closeSessionForPort(existing.port);
+      const goneGen = existing.generation;
+      import('./conversation-pool.js').then(m => m.invalidateFor({ lsPort: existing.port, lsGeneration: goneGen })).catch(() => {});
+    }
+    _pool.delete(key);
+  }
 
   // Coalesce concurrent callers onto a single spawn. The chat handlers
   // call ensureLs(acct.proxy) on every request; before this guard, a burst
@@ -313,6 +351,8 @@ export async function ensureLs(proxy = null) {
     const entry = {
       process: proc, port, csrfToken: DEFAULT_CSRF,
       proxy, startedAt: Date.now(), ready: false,
+      proxyKey: desiredProxyKey,
+      account: meta.account || null,
       // v2.0.25 LOW-1: per-spawn UUID so the conversation pool can tell a
       // new LS that landed on the same port apart from the dead one. Used
       // by checkout(expected={lsGeneration}) and invalidateFor({lsGeneration}).
@@ -349,6 +389,16 @@ export async function ensureLs(proxy = null) {
   }
 }
 
+export async function ensureAccountLs(account = {}, proxy = null) {
+  return ensureLsEntry(accountLsKey(account), proxy, {
+    account: {
+      id: account.id || '',
+      email: account.email || '',
+      apiKey: account.apiKey || '',
+    },
+  });
+}
+
 /**
  * Stop and remove the LS instance associated with a given proxy.
  * Used when a proxy is reassigned so the old egress no longer exists.
@@ -374,6 +424,26 @@ export async function restartLsForProxy(proxy) {
   return ensureLs(proxy);
 }
 
+export async function restartLsByKey(key) {
+  const entry = _pool.get(key);
+  if (!entry) return key === 'default' ? ensureLs(null) : null;
+  const proxy = entry.proxy || null;
+  const account = entry.account || null;
+  if (entry?.process) {
+    try { entry.process.kill('SIGTERM'); } catch {}
+  }
+  if (entry?.port) {
+    closeSessionForPort(entry.port);
+    try {
+      const m = await import('./conversation-pool.js');
+      m.invalidateFor({ lsPort: entry.port, lsGeneration: entry.generation });
+    } catch {}
+  }
+  _pool.delete(key);
+  if (account) return ensureAccountLs(account, proxy);
+  return ensureLs(proxy);
+}
+
 /**
  * Get the LS entry matching a proxy, or null if it hasn't been spawned.
  * Callers should `await ensureLs(proxy)` first — don't silently fall back
@@ -383,6 +453,10 @@ export async function restartLsForProxy(proxy) {
  */
 export function getLsFor(proxy) {
   return _pool.get(proxyKey(proxy)) || null;
+}
+
+export function getLsForAccount(account = {}) {
+  return _pool.get(accountLsKey(account)) || null;
 }
 
 /**
@@ -479,6 +553,7 @@ export function getLsStatus() {
     instances: Array.from(_pool.entries()).map(([key, e]) => ({
       key, port: e.port,
       pid: e.process?.pid || null,
+      accountId: e.account?.id || null,
       proxy: e.proxy ? `${e.proxy.host}:${e.proxy.port}` : null,
       startedAt: e.startedAt,
       ready: e.ready,

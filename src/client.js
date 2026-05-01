@@ -389,6 +389,25 @@ export class WindsurfClient {
     return accountState.workspaceInit;
   }
 
+  async keepCascadeAlive() {
+    await this.warmupCascade();
+    const lsEntry = getLsEntryByPort(this.port);
+    const accountState = getOrCreateLsAccountState(lsEntry, this.apiKey);
+    const sessionId = accountState?.sessionId;
+    if (!sessionId) return;
+    try {
+      const heartbeatProto = buildHeartbeatRequest(this.apiKey, sessionId);
+      await grpcUnary(this.port, this.csrfToken,
+        `${LS_SERVICE}/Heartbeat`, grpcFrame(heartbeatProto), 5000);
+    } catch (e) {
+      if (isCascadeTransportError(e)) {
+        resetCascadeTransportState(this.port);
+        throw markCascadeTransportError(new Error(`Heartbeat: ${e.message}`));
+      }
+      throw e;
+    }
+  }
+
   // ─── Cascade flow ────────────────────────────────────────
 
   /**

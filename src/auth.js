@@ -9,12 +9,12 @@
  */
 
 import { randomUUID, timingSafeEqual } from 'crypto';
-import { readFileSync, writeFileSync, existsSync, renameSync, unlinkSync, readdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, renameSync, unlinkSync, readdirSync, mkdirSync } from 'fs';
 import { config, log } from './config.js';
 import { getEffectiveProxy } from './dashboard/proxy-config.js';
 import { getTierModels, getModelKeysByEnum, MODELS, registerDiscoveredFreeModel } from './models.js';
 
-import { join } from 'path';
+import { dirname, join } from 'path';
 // accounts.json lives in the cluster-shared dir so add-account writes from
 // one replica survive future restarts and are visible to every replica.
 // See `src/config.js` (sharedDataDir vs dataDir) and issue #67.
@@ -27,6 +27,7 @@ const ACCOUNTS_PERSIST_DISABLED = process.execArgv.includes('--test')
 const accounts = [];
 let _roundRobinIndex = 0;
 let _bindHost = '0.0.0.0';
+let _allowEmptyAccountSave = false;
 
 // Per-tier requests-per-minute limits. Used for both filter-by-cap and
 // weighted selection (accounts with more headroom are preferred).
@@ -52,6 +53,64 @@ function nextReservationToken(now) {
 function positiveIntEnv(name, fallback) {
   const n = parseInt(process.env[name] || '', 10);
   return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+function accountLsIdentity(account) {
+  return {
+    id: account?.id || '',
+    email: account?.email || '',
+    apiKey: account?.apiKey || '',
+  };
+}
+
+function workspaceWarmupTarget() {
+  return positiveIntEnv('ACCOUNT_WORKSPACE_PREWARM_COUNT', 2);
+}
+
+async function warmupAccountWorkspace(account) {
+  if (!account?.apiKey) return null;
+  const { ensureAccountLs } = await import('./langserver.js');
+  const { WindsurfClient } = await import('./client.js');
+  const proxy = getEffectiveProxy(account.id) || null;
+  const ls = await ensureAccountLs(accountLsIdentity(account), proxy);
+  const client = new WindsurfClient(account.apiKey, ls.port, ls.csrfToken);
+  await client.keepCascadeAlive();
+  return ls;
+}
+
+let _workspacePrewarmInFlight = null;
+
+export async function prewarmAvailableWorkspaces(modelKey = null, excludeKeys = []) {
+  const target = workspaceWarmupTarget();
+  if (target <= 0) return [];
+  const now = Date.now();
+  const excluded = new Set(excludeKeys.filter(Boolean));
+  const candidates = accounts
+    .filter(a => a.status === 'active')
+    .filter(a => a.apiKey && !excluded.has(a.apiKey))
+    .filter(a => !isRateLimitedForModel(a, modelKey, now))
+    .filter(a => !modelKey || isModelAllowedForAccount(a, modelKey))
+    .sort((a, b) => {
+      const ia = a._inflight || 0;
+      const ib = b._inflight || 0;
+      if (ia !== ib) return ia - ib;
+      return (a.lastUsed || 0) - (b.lastUsed || 0);
+    })
+    .slice(0, target);
+  const results = await Promise.allSettled(candidates.map(a => warmupAccountWorkspace(a)));
+  results.forEach((r, idx) => {
+    if (r.status === 'rejected') log.warn(`Workspace prewarm failed for ${candidates[idx]?.email || candidates[idx]?.id}: ${r.reason?.message || r.reason}`);
+  });
+  return results;
+}
+
+function scheduleWorkspacePrewarm(modelKey = null, excludeKeys = []) {
+  if (ACCOUNTS_PERSIST_DISABLED || process.execArgv.includes('--test')) return null;
+  if (_workspacePrewarmInFlight) return _workspacePrewarmInFlight;
+  _workspacePrewarmInFlight = prewarmAvailableWorkspaces(modelKey, excludeKeys)
+    .catch(e => log.warn(`Workspace prewarm failed: ${e.message}`))
+    .finally(() => { _workspacePrewarmInFlight = null; });
+  return _workspacePrewarmInFlight;
 }
 
 function rpmLimitFor(account) {
@@ -142,6 +201,49 @@ function dedupeAccountsInMemory() {
 // together; without a mutex the last writer wins on stale memory state.
 let _saveInFlight = false;
 let _savePending = false;
+
+function parseAccountsFileSummary(file) {
+  if (!existsSync(file)) return { exists: false, parseOk: true, count: 0, data: [] };
+  try {
+    const data = JSON.parse(readFileSync(file, 'utf-8'));
+    if (!Array.isArray(data)) return { exists: true, parseOk: false, count: 0, data: [] };
+    return { exists: true, parseOk: true, count: data.length, data };
+  } catch {
+    return { exists: true, parseOk: false, count: 0, data: [] };
+  }
+}
+
+export function shouldSkipEmptyAccountsWrite({ accountCount, allowEmptyAccountSave, existingParseOk, existingCount }) {
+  if (accountCount > 0 || allowEmptyAccountSave) return false;
+  if (!existingParseOk) return true;
+  return existingCount > 0;
+}
+
+function writeAccountsFileSync(tempSuffix) {
+  if (ACCOUNTS_PERSIST_DISABLED) return false;
+  const existing = parseAccountsFileSummary(ACCOUNTS_FILE);
+  if (shouldSkipEmptyAccountsWrite({
+    accountCount: accounts.length,
+    allowEmptyAccountSave: _allowEmptyAccountSave,
+    existingParseOk: existing.parseOk,
+    existingCount: existing.count,
+  })) {
+    log.warn(`Refusing to overwrite non-empty/corrupt accounts file with empty in-memory state: ${ACCOUNTS_FILE}`);
+    return false;
+  }
+  mkdirSync(dirname(ACCOUNTS_FILE), { recursive: true });
+  const tempFile = `${ACCOUNTS_FILE}.${tempSuffix}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(tempFile, JSON.stringify(_serializeAccounts(), null, 2));
+    renameSync(tempFile, ACCOUNTS_FILE);
+  } catch (e) {
+    try { unlinkSync(tempFile); } catch {}
+    throw e;
+  }
+  if (accounts.length > 0) _allowEmptyAccountSave = false;
+  return true;
+}
+
 function _serializeAccounts() {
   return accounts.map(a => ({
     id: a.id, email: a.email, apiKey: a.apiKey,
@@ -162,16 +264,10 @@ function saveAccounts() {
   if (ACCOUNTS_PERSIST_DISABLED) return;
   if (_saveInFlight) { _savePending = true; return; }
   _saveInFlight = true;
-  const tempFile = ACCOUNTS_FILE + '.tmp';
   try {
-    // Atomic write: write to .tmp then rename so a crash mid-write can't
-    // leave accounts.json truncated/corrupt. Node's renameSync is atomic
-    // on POSIX and replaces the target on Windows (fs.rename behavior).
-    writeFileSync(tempFile, JSON.stringify(_serializeAccounts(), null, 2));
-    renameSync(tempFile, ACCOUNTS_FILE);
+    writeAccountsFileSync('write');
   } catch (e) {
     log.error('Failed to save accounts:', e.message);
-    try { unlinkSync(tempFile); } catch {}
   } finally {
     _saveInFlight = false;
     if (_savePending) { _savePending = false; setImmediate(saveAccounts); }
@@ -187,13 +283,36 @@ function saveAccounts() {
  */
 export function saveAccountsSync() {
   if (ACCOUNTS_PERSIST_DISABLED) return;
-  const tempFile = ACCOUNTS_FILE + '.shutdown.tmp';
   try {
-    writeFileSync(tempFile, JSON.stringify(_serializeAccounts(), null, 2));
-    renameSync(tempFile, ACCOUNTS_FILE);
+    writeAccountsFileSync('shutdown');
   } catch (e) {
     log.error('Shutdown: failed to flush accounts:', e.message);
-    try { unlinkSync(tempFile); } catch {}
+  }
+}
+
+export function migrateLegacyAccountsTo({ legacyFile, accountsFile, logger = log }) {
+  if (!legacyFile || !accountsFile || legacyFile === accountsFile) {
+    return { migrated: 0, skipped: true };
+  }
+  const target = parseAccountsFileSummary(accountsFile);
+  if (target.exists && (!target.parseOk || target.count > 0)) {
+    return { migrated: 0, skipped: true };
+  }
+  const legacy = parseAccountsFileSummary(legacyFile);
+  if (!legacy.exists || !legacy.parseOk || legacy.count === 0) {
+    return { migrated: 0, skipped: true };
+  }
+  try {
+    mkdirSync(dirname(accountsFile), { recursive: true });
+    const tempFile = `${accountsFile}.legacy.tmp`;
+    writeFileSync(tempFile, JSON.stringify(legacy.data, null, 2));
+    renameSync(tempFile, accountsFile);
+    logger.warn?.(`Migrated ${legacy.count} account(s) from legacy accounts file ${legacyFile} into ${accountsFile}`);
+    return { migrated: legacy.count, skipped: false };
+  } catch (e) {
+    logger.error?.(`Legacy account migration write failed: ${e.message}`);
+    try { unlinkSync(`${accountsFile}.legacy.tmp`); } catch {}
+    return { migrated: 0, skipped: false, error: e.message };
   }
 }
 
@@ -247,6 +366,10 @@ export function migrateReplicaAccountsTo({ sharedDir, accountsFile, logger = log
 function loadAccounts() {
   if (ACCOUNTS_PERSIST_DISABLED) return;
   try {
+    migrateLegacyAccountsTo({
+      legacyFile: join(process.cwd(), 'accounts.json'),
+      accountsFile: ACCOUNTS_FILE,
+    });
     migrateReplicaAccountsTo({
       sharedDir: config.sharedDataDir || config.dataDir,
       accountsFile: ACCOUNTS_FILE,
@@ -604,6 +727,7 @@ export function removeAccount(id) {
   if (idx === -1) return false;
   const account = accounts[idx];
   accounts.splice(idx, 1);
+  if (accounts.length === 0) _allowEmptyAccountSave = true;
   saveAccounts();
   // Drop any Cascade conversations owned by this key so future requests
   // don't try to resume on an account that no longer exists.
@@ -768,19 +892,9 @@ export function getRpmStats() {
  * the first-time LS spawn.
  */
 export async function ensureLsForAccount(accountId) {
-  const { ensureLs } = await import('./langserver.js');
   const account = accounts.find(a => a.id === accountId);
-  const proxy = getEffectiveProxy(accountId) || null;
   try {
-    const ls = await ensureLs(proxy);
-    // Pre-warm the Cascade workspace init so the first real request on this
-    // LS doesn't pay the 3-roundtrip setup cost. Fire-and-forget — chat
-    // requests still await the same Promise if it hasn't finished yet.
-    if (ls && account?.apiKey) {
-      const { WindsurfClient } = await import('./client.js');
-      const client = new WindsurfClient(account.apiKey, ls.port, ls.csrfToken);
-      client.warmupCascade().catch(e => log.warn(`Cascade warmup failed: ${e.message}`));
-    }
+    await warmupAccountWorkspace(account);
   } catch (e) {
     log.error(`Failed to start LS for account ${accountId}: ${e.message}`);
   }
@@ -805,6 +919,7 @@ export function markRateLimited(apiKey, durationMs = 5 * 60 * 1000, modelKey = n
     account.rateLimitedUntil = Math.max(account.rateLimitedUntil || 0, until);
     log.warn(`Account ${account.id} (${account.email}) rate-limited (all models) for ${Math.round(safeMs / 60000)} min`);
   }
+  scheduleWorkspacePrewarm(modelKey, [apiKey]);
 }
 
 export function refundReservation(apiKey, timestamp) {
@@ -1108,10 +1223,9 @@ export async function fetchUserStatus(id) {
   if (!account) return null;
 
   const { WindsurfClient } = await import('./client.js');
-  const { ensureLs, getLsFor } = await import('./langserver.js');
+  const { ensureAccountLs } = await import('./langserver.js');
   const proxy = getEffectiveProxy(account.id) || null;
-  await ensureLs(proxy);
-  const ls = getLsFor(proxy);
+  const ls = await ensureAccountLs(accountLsIdentity(account), proxy);
   if (!ls) { log.warn(`No LS for GetUserStatus on ${account.id}`); return null; }
 
   const client = new WindsurfClient(account.apiKey, ls.port, ls.csrfToken);
@@ -1228,11 +1342,10 @@ async function _probeAccountImpl(account) {
 
   const { WindsurfClient } = await import('./client.js');
   const { getModelInfo } = await import('./models.js');
-  const { ensureLs, getLsFor } = await import('./langserver.js');
+  const { ensureAccountLs } = await import('./langserver.js');
 
   const proxy = getEffectiveProxy(account.id) || null;
-  await ensureLs(proxy);
-  const ls = getLsFor(proxy);
+  const ls = await ensureAccountLs(accountLsIdentity(account), proxy);
   if (!ls) { log.error(`No LS available for account ${account.id}`); return null; }
   const port = ls.port;
   const csrf = ls.csrfToken;
@@ -1489,19 +1602,12 @@ export async function initAuth() {
     refreshAllFirebaseTokens().catch(e => log.warn(`Scheduled token refresh: ${e.message}`));
   }, TOKEN_REFRESH_INTERVAL).unref?.();
 
-  // Warm up an LS instance for each account's configured proxy so the first
-  // chat request doesn't pay the spawn cost.
-  const { ensureLs } = await import('./langserver.js');
-  const uniqueProxies = new Map();
-  for (const a of accounts) {
-    const p = getEffectiveProxy(a.id);
-    const k = p ? `${p.host}:${p.port}` : 'default';
-    if (!uniqueProxies.has(k)) uniqueProxies.set(k, p || null);
-  }
-  for (const p of uniqueProxies.values()) {
-    try { await ensureLs(p); }
-    catch (e) { log.warn(`LS warmup failed: ${e.message}`); }
-  }
+  try { await prewarmAvailableWorkspaces(); }
+  catch (e) { log.warn(`LS warmup failed: ${e.message}`); }
+  const WORKSPACE_KEEPALIVE_INTERVAL = positiveIntEnv('ACCOUNT_WORKSPACE_KEEPALIVE_MS', 2 * 60 * 1000);
+  setInterval(() => {
+    scheduleWorkspacePrewarm();
+  }, WORKSPACE_KEEPALIVE_INTERVAL).unref?.();
 
   const counts = getAccountCount();
   if (counts.total > 0) {

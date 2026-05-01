@@ -193,6 +193,17 @@ export const MODELS = {
   'arena-smart':                    { name: 'arena-smart',                    provider: 'windsurf', enumValue: 0,   modelUid: 'arena-smart', credit: 1 },
 };
 
+export const SERVICE_MODEL_ALLOWLIST = ['gpt-5.5-high', 'gpt-5.5-xhigh'];
+const SERVICE_MODEL_ALLOWLIST_SET = new Set(SERVICE_MODEL_ALLOWLIST);
+const SERVICE_PUBLIC_MODEL_IDS = {
+  'gpt-5.5-high': 'gp55',
+  'gpt-5.5-xhigh': 'gp55xhigh',
+};
+
+export function isServiceModelAllowed(modelKey) {
+  return SERVICE_MODEL_ALLOWLIST_SET.has(modelKey);
+}
+
 // Build reverse lookup
 const _lookup = new Map();
 for (const [id, info] of Object.entries(MODELS)) {
@@ -241,6 +252,16 @@ _lookup.set('gpt-5-5-low', 'gpt-5.5-low');
 _lookup.set('gpt-5-5-medium', 'gpt-5.5-medium');
 _lookup.set('gpt-5-5-high', 'gpt-5.5-high');
 _lookup.set('gpt-5-5-xhigh', 'gpt-5.5-xhigh');
+_lookup.set('gp5.5', 'gpt-5.5-high');
+_lookup.set('gp5.5-high', 'gpt-5.5-high');
+_lookup.set('gp5.5-xhigh', 'gpt-5.5-xhigh');
+_lookup.set('gp55', 'gpt-5.5-high');
+_lookup.set('gp55high', 'gpt-5.5-high');
+_lookup.set('gp55-high', 'gpt-5.5-high');
+_lookup.set('gp55xhigh', 'gpt-5.5-xhigh');
+_lookup.set('gp55-xhigh', 'gpt-5.5-xhigh');
+_lookup.set('w5.5-high', 'gpt-5.5-high');
+_lookup.set('w5.5-xhigh', 'gpt-5.5-xhigh');
 
 // Anthropic official dated names — Cursor / Claude Code / Anthropic SDK
 // all send these verbatim. Map each to our short key so the same client
@@ -332,6 +353,7 @@ function publicModelName(name) {
   const raw = String(name || '').trim();
   if (!raw) return raw;
   const lower = raw.toLowerCase();
+  if (SERVICE_PUBLIC_MODEL_IDS[lower]) return SERVICE_PUBLIC_MODEL_IDS[lower];
   const asW = suffix => /^[0-9]/.test(suffix) ? `w${suffix}` : `w-${suffix}`;
   if (lower.startsWith('gpt-')) return asW(raw.slice(4));
   if (lower.startsWith('gpt')) return asW(raw.slice(3).replace(/^-/, ''));
@@ -421,6 +443,7 @@ export function getTierModels(tier) {
 export function listModels() {
   const ts = Math.floor(Date.now() / 1000);
   return Object.entries(MODELS)
+    .filter(([id]) => isServiceModelAllowed(id))
     .filter(([, info]) => !info.deprecated)
     .map(([id, info]) => ({
       id: toPublicModelId(id),

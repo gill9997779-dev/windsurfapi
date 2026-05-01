@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import http2 from 'http2';
-import { redactProxyUrl, buildLanguageServerEnv, probeLanguageServerPort } from '../src/langserver.js';
+import { accountLsKey, redactProxyUrl, buildLanguageServerEnv, probeLanguageServerPort } from '../src/langserver.js';
 
 async function withHttp2Server(handler, fn) {
   const server = http2.createServer();
@@ -22,6 +22,19 @@ describe('redactProxyUrl', () => {
 
   it('shows host and port for unauthenticated proxies', () => {
     assert.equal(redactProxyUrl({ host: 'proxy.example.com', port: 1080 }), 'proxy.example.com:1080');
+  });
+});
+
+describe('accountLsKey', () => {
+  it('uses a stable account-scoped key when an account id exists', () => {
+    assert.equal(accountLsKey({ id: 'acc_123', apiKey: 'key-a' }), 'acct_acc_123');
+    assert.equal(accountLsKey({ id: 'acc_123', apiKey: 'key-b' }), 'acct_acc_123');
+  });
+
+  it('falls back to a hashed key when no account id exists', () => {
+    const key = accountLsKey({ apiKey: 'key-a' });
+    assert.match(key, /^acct_[0-9a-f]{16}$/);
+    assert.notEqual(key, accountLsKey({ apiKey: 'key-b' }));
   });
 });
 
