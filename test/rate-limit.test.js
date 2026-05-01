@@ -10,7 +10,7 @@ import {
   removeAccount,
   setAccountTier,
 } from '../src/auth.js';
-import { handleChatCompletions, rateLimitCooldownMs } from '../src/handlers/chat.js';
+import { getMaxAccountAttempts, handleChatCompletions, rateLimitCooldownMs } from '../src/handlers/chat.js';
 import { getExperimental, setExperimental } from '../src/runtime-config.js';
 
 const createdAccountIds = [];
@@ -62,6 +62,21 @@ describe('rate-limit handling', () => {
   it('parses explicit retry-after seconds instead of defaulting to five minutes', () => {
     assert.equal(rateLimitCooldownMs('Please retry after 117 seconds'), 117000);
     assert.equal(rateLimitCooldownMs('quota hit'), 60000);
+  });
+
+  it('uses MAX_ACCOUNT_ATTEMPTS as the retry fan-out cap', () => {
+    const prev = process.env.MAX_ACCOUNT_ATTEMPTS;
+    try {
+      process.env.MAX_ACCOUNT_ATTEMPTS = '25';
+      assert.equal(getMaxAccountAttempts(45), 25);
+      process.env.MAX_ACCOUNT_ATTEMPTS = '2';
+      assert.equal(getMaxAccountAttempts(45), 3);
+      delete process.env.MAX_ACCOUNT_ATTEMPTS;
+      assert.equal(getMaxAccountAttempts(45), 10);
+    } finally {
+      if (prev == null) delete process.env.MAX_ACCOUNT_ATTEMPTS;
+      else process.env.MAX_ACCOUNT_ATTEMPTS = prev;
+    }
   });
 
   it('parses Cascade reset windows into real model cooldowns', () => {

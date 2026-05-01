@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveModel, getModelInfo, getModelKeysByEnum, MODEL_TIER_ACCESS } from '../src/models.js';
+import { resolveModel, getModelInfo, getModelKeysByEnum, MODEL_TIER_ACCESS, listModels, toPublicModelId } from '../src/models.js';
 
 describe('resolveModel', () => {
   it('resolves exact model names', () => {
@@ -9,6 +9,25 @@ describe('resolveModel', () => {
 
   it('resolves case-insensitive aliases', () => {
     assert.equal(resolveModel('GPT-4O'), 'gpt-4o');
+  });
+
+  it('resolves gpt-5.5 aliases and tier variants', () => {
+    assert.equal(resolveModel('gpt5.5'), 'gpt-5.5');
+    assert.equal(resolveModel('gpt-5-5'), 'gpt-5.5');
+    assert.equal(resolveModel('gpt-5-5-xhigh'), 'gpt-5.5-xhigh');
+    assert.equal(resolveModel('w5.5'), 'gpt-5.5');
+    assert.equal(resolveModel('w5.5-xhigh'), 'gpt-5.5-xhigh');
+    assert.equal(getModelInfo('gpt-5.5')?.modelUid, 'gpt-5-5-medium');
+    assert.equal(getModelInfo('gpt-5.5-xhigh')?.modelUid, 'gpt-5-5-xhigh');
+  });
+
+  it('exposes w-prefixed public model names', () => {
+    assert.equal(toPublicModelId('gpt-5.5'), 'w5.5');
+    assert.equal(toPublicModelId('claude-4.5-sonnet-thinking'), 'w4.5-sonnet-thinking');
+    const ids = listModels().map(m => m.id);
+    assert.ok(ids.includes('w5.5'));
+    assert.ok(ids.includes('w4.5-sonnet-thinking'));
+    assert.equal(new Set(ids).size, ids.length);
   });
 
   it('resolves Anthropic dated aliases', () => {

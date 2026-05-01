@@ -70,4 +70,19 @@ describe('shouldEmitNoAuthWarning', () => {
     assert.equal(listed.apiKey_masked, `${key.slice(0, 8)}...${key.slice(-4)}`);
     assert.equal(listed.keyPrefix, 'abcd1234...');
   });
+
+  it('deduplicates accounts by email when a fresh login returns a new api key', () => {
+    const email = `dedupe-${Date.now()}@example.com`;
+    const first = addAccountByKey(`old-key-${Date.now()}`, email, { email });
+    createdAccountIds.push(first.id);
+
+    const second = addAccountByKey(`new-key-${Date.now()}`, email.toUpperCase(), { email: email.toUpperCase(), method: 'email' });
+    if (second.id !== first.id) createdAccountIds.push(second.id);
+
+    const matches = getAccountList().filter(a => String(a.email || '').toLowerCase() === email);
+    assert.equal(second.id, first.id);
+    assert.equal(matches.length, 1);
+    assert.equal(matches[0].keyPrefix, 'new-key-...');
+    assert.equal(matches[0].method, 'email');
+  });
 });

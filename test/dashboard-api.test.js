@@ -1,16 +1,18 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { config } from '../src/config.js';
-import { configureBindHost } from '../src/auth.js';
-import { buildBatchProxyBinding, handleDashboardApi } from '../src/dashboard/api.js';
+import { configureBindHost, removeAccount } from '../src/auth.js';
+import { buildBatchProxyBinding, handleDashboardApi, shouldSkipDuplicateBatchEmail } from '../src/dashboard/api.js';
 
 const originalDashboardPassword = config.dashboardPassword;
 const originalApiKey = config.apiKey;
+const createdAccountIds = [];
 
 afterEach(() => {
   config.dashboardPassword = originalDashboardPassword;
   config.apiKey = originalApiKey;
   configureBindHost('0.0.0.0');
+  while (createdAccountIds.length) removeAccount(createdAccountIds.pop());
 });
 
 function fakeRes() {
@@ -71,5 +73,21 @@ describe('dashboard batch import proxy binding', () => {
     await handleDashboardApi('GET', '/cache', {}, { headers: { 'x-dashboard-password': 'dash-secret' } }, res);
 
     assert.equal(res.statusCode, 200);
+  });
+
+  it('detects duplicate emails within the same batch without blocking existing-account refresh', () => {
+    const seen = new Set();
+    assert.deepEqual(shouldSkipDuplicateBatchEmail(seen, 'User@Example.com', true), {
+      skip: false,
+      normalizedEmail: 'user@example.com',
+    });
+    assert.deepEqual(shouldSkipDuplicateBatchEmail(seen, 'user@example.com', true), {
+      skip: true,
+      normalizedEmail: 'user@example.com',
+    });
+    assert.deepEqual(shouldSkipDuplicateBatchEmail(seen, 'user@example.com', false), {
+      skip: false,
+      normalizedEmail: 'user@example.com',
+    });
   });
 });

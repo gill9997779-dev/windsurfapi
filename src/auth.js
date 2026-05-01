@@ -65,6 +65,76 @@ function pruneRpmHistory(account, now) {
   return account._rpmHistory.length;
 }
 
+function normalizeAccountEmail(value) {
+  const s = String(value || '').trim().toLowerCase();
+  if (!s || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)) return '';
+  return s;
+}
+
+function invalidateApiKeyLater(apiKey) {
+  if (!apiKey) return;
+  import('./conversation-pool.js').then(m => m.invalidateFor({ apiKey })).catch(() => {});
+}
+
+function mergeDuplicateAccount(target, duplicate) {
+  if (!target || !duplicate || target === duplicate) return target;
+  const targetTime = Number(target.addedAt || 0);
+  const duplicateTime = Number(duplicate.addedAt || 0);
+  const preferDuplicateCredentials = duplicateTime >= targetTime;
+  const oldKey = target.apiKey;
+
+  if (preferDuplicateCredentials && duplicate.apiKey) target.apiKey = duplicate.apiKey;
+  if (!normalizeAccountEmail(target.email) && normalizeAccountEmail(duplicate.email)) target.email = duplicate.email;
+  if (preferDuplicateCredentials && duplicate.method) target.method = duplicate.method;
+  if (preferDuplicateCredentials && duplicate.apiServerUrl) target.apiServerUrl = duplicate.apiServerUrl;
+  else if (!target.apiServerUrl && duplicate.apiServerUrl) target.apiServerUrl = duplicate.apiServerUrl;
+  if (preferDuplicateCredentials && duplicate.refreshToken) target.refreshToken = duplicate.refreshToken;
+  else if (!target.refreshToken && duplicate.refreshToken) target.refreshToken = duplicate.refreshToken;
+  if (preferDuplicateCredentials && duplicate.idToken) target.idToken = duplicate.idToken;
+  else if (!target.idToken && duplicate.idToken) target.idToken = duplicate.idToken;
+  if (duplicate.status === 'active' || !target.status) target.status = 'active';
+  target.errorCount = Math.min(Number(target.errorCount || 0), Number(duplicate.errorCount || 0));
+  target.lastUsed = Math.max(Number(target.lastUsed || 0), Number(duplicate.lastUsed || 0));
+  target.lastProbed = Math.max(Number(target.lastProbed || 0), Number(duplicate.lastProbed || 0));
+  target.capabilities = { ...(duplicate.capabilities || {}), ...(target.capabilities || {}) };
+  target.blockedModels = [...new Set([...(target.blockedModels || []), ...(duplicate.blockedModels || [])])];
+  if (!target.credits || ((duplicate.credits?.fetchedAt || 0) > (target.credits?.fetchedAt || 0))) target.credits = duplicate.credits || target.credits || null;
+  if (!target.userStatus || ((duplicate.userStatusLastFetched || 0) > (target.userStatusLastFetched || 0))) {
+    target.userStatus = duplicate.userStatus || target.userStatus || null;
+    target.userStatusLastFetched = duplicate.userStatusLastFetched || target.userStatusLastFetched || 0;
+  }
+  if (target.apiKey !== oldKey) invalidateApiKeyLater(oldKey);
+  invalidateApiKeyLater(duplicate.apiKey);
+  const idx = accounts.indexOf(duplicate);
+  if (idx !== -1) accounts.splice(idx, 1);
+  return target;
+}
+
+function findAccountForUpsert(apiKey, email) {
+  const normalized = normalizeAccountEmail(email);
+  const byEmail = normalized ? accounts.find(a => normalizeAccountEmail(a.email) === normalized) : null;
+  const byKey = apiKey ? accounts.find(a => a.apiKey === apiKey) : null;
+  if (byEmail && byKey && byEmail !== byKey) return mergeDuplicateAccount(byEmail, byKey);
+  return byEmail || byKey || null;
+}
+
+function dedupeAccountsInMemory() {
+  let removed = 0;
+  for (let i = 0; i < accounts.length; i++) {
+    const current = accounts[i];
+    const email = normalizeAccountEmail(current.email);
+    for (let j = i + 1; j < accounts.length; j++) {
+      const candidate = accounts[j];
+      if ((current.apiKey && candidate.apiKey === current.apiKey) || (email && normalizeAccountEmail(candidate.email) === email)) {
+        mergeDuplicateAccount(current, candidate);
+        removed++;
+        j--;
+      }
+    }
+  }
+  return removed;
+}
+
 // Serialize concurrent saveAccounts calls — multiple async paths
 // (reportSuccess / markRateLimited / updateCapability / probe) can fire
 // together; without a mutex the last writer wins on stale memory state.
@@ -179,7 +249,6 @@ function loadAccounts() {
     if (!existsSync(ACCOUNTS_FILE)) return;
     const data = JSON.parse(readFileSync(ACCOUNTS_FILE, 'utf-8'));
     for (const a of data) {
-      if (accounts.find(x => x.apiKey === a.apiKey)) continue;
       accounts.push({
         id: a.id || randomUUID().slice(0, 8),
         email: a.email, apiKey: a.apiKey,
@@ -199,7 +268,12 @@ function loadAccounts() {
         userStatusLastFetched: a.userStatusLastFetched || 0,
       });
     }
-    if (data.length > 0) log.info(`Loaded ${data.length} account(s) from disk`);
+    const removed = dedupeAccountsInMemory();
+    if (removed > 0) {
+      saveAccounts();
+      log.warn(`Deduplicated ${removed} duplicate account(s) while loading accounts`);
+    }
+    if (accounts.length > 0) log.info(`Loaded ${accounts.length} account(s) from disk`);
   } catch (e) {
     log.error('Failed to load accounts:', e.message);
   }
@@ -238,16 +312,30 @@ async function registerWithCodeium(idToken) {
 /**
  * Add account via API key.
  */
-export function addAccountByKey(apiKey, label = '') {
-  const existing = accounts.find(a => a.apiKey === apiKey);
-  if (existing) return existing;
+export function addAccountByKey(apiKey, label = '', options = {}) {
+  const identityEmail = options.email || label;
+  const existing = findAccountForUpsert(apiKey, identityEmail);
+  if (existing) {
+    const oldKey = existing.apiKey;
+    if (apiKey && existing.apiKey !== apiKey) existing.apiKey = apiKey;
+    if (normalizeAccountEmail(identityEmail)) existing.email = String(identityEmail).trim();
+    else if (label && (!existing.email || existing.email.startsWith('key-') || existing.email.startsWith('token-'))) existing.email = label;
+    if (options.apiServerUrl) existing.apiServerUrl = options.apiServerUrl;
+    if (options.method) existing.method = options.method;
+    existing.status = 'active';
+    existing.errorCount = 0;
+    if (oldKey !== existing.apiKey) invalidateApiKeyLater(oldKey);
+    saveAccounts();
+    log.info(`Account reused: ${existing.id} (${existing.email}) [dedupe]`);
+    return existing;
+  }
 
   const account = {
     id: randomUUID().slice(0, 8),
-    email: label || `key-${apiKey.slice(0, 8)}`,
+    email: String(identityEmail || label || `key-${apiKey.slice(0, 8)}`).trim(),
     apiKey,
-    apiServerUrl: '',
-    method: 'api_key',
+    apiServerUrl: options.apiServerUrl || '',
+    method: options.method || 'api_key',
     status: 'active',
     lastUsed: 0,
     errorCount: 0,
@@ -272,8 +360,19 @@ export function addAccountByKey(apiKey, label = '') {
  */
 export async function addAccountByToken(token, label = '') {
   const reg = await registerWithCodeium(token);
-  const existing = accounts.find(a => a.apiKey === reg.apiKey);
-  if (existing) return existing;
+  const existing = findAccountForUpsert(reg.apiKey, label || reg.name);
+  if (existing) {
+    const oldKey = existing.apiKey;
+    existing.apiKey = reg.apiKey;
+    existing.email = label || reg.name || existing.email || `token-${reg.apiKey.slice(0, 8)}`;
+    existing.apiServerUrl = reg.apiServerUrl || existing.apiServerUrl || '';
+    existing.method = 'token';
+    existing.status = 'active';
+    existing.errorCount = 0;
+    if (oldKey !== existing.apiKey) invalidateApiKeyLater(oldKey);
+    saveAccounts();
+    return existing;
+  }
 
   const account = {
     id: randomUUID().slice(0, 8),
@@ -318,9 +417,14 @@ export async function addAccountByEmail(email, password) {
   if (!result?.apiKey) {
     throw new Error('Login succeeded but no apiKey returned');
   }
-  const account = addAccountByKey(result.apiKey, result.name || email);
-  if (account.email !== (result.name || email)) {
-    account.email = result.name || email;
+  const accountEmail = result.email || email;
+  const account = addAccountByKey(result.apiKey, accountEmail || result.name || email, {
+    email: accountEmail,
+    method: 'email',
+    apiServerUrl: result.apiServerUrl || '',
+  });
+  if (accountEmail && account.email !== accountEmail) {
+    account.email = accountEmail;
   }
   account.method = 'email';
   if (result.apiServerUrl && !account.apiServerUrl) {
@@ -471,9 +575,16 @@ export function setAccountTier(id, tier) {
 }
 
 export function setAccountTokens(id, { apiKey, refreshToken, idToken } = {}) {
-  const account = accounts.find(a => a.id === id);
+  let account = accounts.find(a => a.id === id);
   if (!account) return false;
-  if (apiKey != null) account.apiKey = apiKey;
+  if (apiKey != null) {
+    const oldKey = account.apiKey;
+    const email = normalizeAccountEmail(account.email);
+    const duplicate = accounts.find(a => a !== account && (a.apiKey === apiKey || (email && normalizeAccountEmail(a.email) === email)));
+    if (duplicate) account = mergeDuplicateAccount(account, duplicate);
+    account.apiKey = apiKey;
+    if (oldKey !== account.apiKey) invalidateApiKeyLater(oldKey);
+  }
   if (refreshToken != null) account.refreshToken = refreshToken;
   if (idToken != null) account.idToken = idToken;
   saveAccounts();

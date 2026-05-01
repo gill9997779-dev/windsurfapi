@@ -403,6 +403,7 @@ export class WindsurfClient {
     // panel-missing — discard the reuse entry and fresh-start with full
     // history replay.
     const isExpiredCascade = (e) => /not_found.*(cascade|trajectory)|(?:cascade|trajectory).*not[ _-]?found|expired.*cascade|unknown.*cascade/i.test(e?.message || '');
+    const isUntrustedWorkspace = (e) => /untrusted workspace/i.test(e?.message || '');
 
     try {
       // Step 1: Start cascade — with retry on panel-state-not-found
@@ -577,25 +578,38 @@ export class WindsurfClient {
       let panelRetry = 0;
       let historyRebuilt = false;
       let cascadeExpiredOnce = false;
+      let untrustedWorkspaceOnce = false;
       while (true) {
         try {
           await sendMessage();
           break;
         } catch (e) {
           const expired = isExpiredCascade(e);
-          if (!isPanelMissing(e) && !expired) throw e;
+          const untrusted = isUntrustedWorkspace(e);
+          if (!isPanelMissing(e) && !expired && !untrusted) throw e;
           panelRetry++;
           if (panelRetry > MAX_PANEL_RETRIES) {
-            const detail = cascadeExpiredOnce ? 'cascade expired and could not be re-established' : `Panel state lost ${panelRetry - 1} times after re-warm`;
+            const detail = cascadeExpiredOnce
+              ? 'cascade expired and could not be re-established'
+              : untrustedWorkspaceOnce
+              ? 'Workspace remained untrusted after re-warm'
+              : `Panel state lost ${panelRetry - 1} times after re-warm`;
             const err = new Error(`${detail} — likely an LS-level issue with very large payloads (${text.length} chars). Try reducing system prompt size or tool count.`);
             // Tell the handler the entry we held is dead so it doesn't
             // restore it to the pool on the way out (HIGH-2).
             if (cascadeExpiredOnce) err.reuseEntryInvalid = true;
+            if (untrustedWorkspaceOnce) {
+              err.isModelError = true;
+              err.kind = 'transient_stall';
+            }
             throw err;
           }
           if (expired) {
             cascadeExpiredOnce = true;
             log.warn(`Cascade expired/not-found on Send (retry ${panelRetry}/${MAX_PANEL_RETRIES}), discarding reuse entry, replaying full history on port=${this.port}: ${e.message}`);
+          } else if (untrusted) {
+            untrustedWorkspaceOnce = true;
+            log.warn(`Workspace untrusted on Send (retry ${panelRetry}/${MAX_PANEL_RETRIES}), re-warming port=${this.port}: ${e.message}`);
           } else {
             log.warn(`Panel state missing on Send (retry ${panelRetry}/${MAX_PANEL_RETRIES}), payload=${text.length} chars, re-warming port=${this.port}`);
           }

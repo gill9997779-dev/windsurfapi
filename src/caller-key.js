@@ -48,6 +48,84 @@ function ipUaFingerprint(req) {
   return sha256Hex(`${ip}\0${ua}`).slice(0, 16);
 }
 
+function headerValue(req, name) {
+  const value = req?.headers?.[name] ?? req?.headers?.[name.toLowerCase()];
+  if (Array.isArray(value)) return String(value[0] || '').trim();
+  return String(value || '').trim();
+}
+
+function requestIp(req) {
+  const forwarded = headerValue(req, 'x-forwarded-for').split(',')[0].trim();
+  const raw = forwarded || req?.socket?.remoteAddress || req?.connection?.remoteAddress || '';
+  const ip = String(raw || '').trim().replace(/^\[|\]$/g, '').replace(/^::ffff:/i, '');
+  return ip === '::1' ? '127.0.0.1' : ip;
+}
+
+function safeText(value, fallback = '', max = 120) {
+  const text = String(value || '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, max);
+  return text || fallback;
+}
+
+function maskedToken(apiKey) {
+  const text = String(apiKey || '').trim();
+  if (!text) return 'anonymous';
+  if (text.length <= 10) return `${text.slice(0, 3)}...${text.slice(-2)}`;
+  return `${text.slice(0, 6)}...${text.slice(-4)}`;
+}
+
+function projectFromBody(body) {
+  return body?.metadata?.project
+    || body?.metadata?.project_id
+    || body?.metadata?.client_project
+    || body?.project
+    || '';
+}
+
+function clientNameFromBody(body) {
+  return body?.metadata?.client_name
+    || body?.metadata?.client
+    || body?.metadata?.app
+    || '';
+}
+
+function deviceTagFromMetadata(body) {
+  const userId = body?.metadata?.user_id;
+  if (typeof userId !== 'string' || !userId) return '';
+  try {
+    const parsed = JSON.parse(userId);
+    if (parsed && typeof parsed === 'object') {
+      return parsed.device_id || parsed.deviceId || parsed.session_id || parsed.sessionId || parsed.account_uuid || parsed.accountUuid || '';
+    }
+  } catch {}
+  return userId;
+}
+
+export function requestAttributionFromRequest(req, apiKey = '', body = null) {
+  const ip = requestIp(req);
+  const userAgent = headerValue(req, 'user-agent');
+  const tokenHash = apiKey ? sha256Hex(apiKey).slice(0, 16) : '';
+  const deviceTag = deviceTagFromMetadata(body);
+  const ipua = ipUaFingerprint(req);
+  const deviceHash = deviceTag ? sha256Hex(deviceTag).slice(0, 16) : ipua;
+  const isLocal = !ip || ip === '127.0.0.1' || ip === 'localhost';
+  const network = isLocal ? 'local' : 'lan';
+  const clientName = headerValue(req, 'x-client-name') || headerValue(req, 'x-device-name') || clientNameFromBody(body);
+  const project = headerValue(req, 'x-project')
+    || headerValue(req, 'x-client-project')
+    || headerValue(req, 'x-project-id')
+    || projectFromBody(body);
+  return {
+    tokenId: tokenHash ? `api:${tokenHash}` : 'anonymous',
+    tokenLabel: maskedToken(apiKey),
+    deviceId: deviceHash ? `device:${deviceHash}` : 'unknown',
+    deviceLabel: safeText(clientName, ip ? `${network}:${ip}` : network, 120),
+    ip: safeText(ip, 'unknown', 80),
+    userAgent: safeText(userAgent, '', 200),
+    project: safeText(project, 'default', 80),
+    network,
+  };
+}
+
 export function callerKeyFromRequest(req, apiKey = '', body = null) {
   const bodySubKey = body ? extractBodyCallerSubKey(body) : '';
   if (apiKey) {

@@ -286,4 +286,80 @@ describe('WindsurfClient cascade panel retry', () => {
       assert.match(chunks.map(c => c.text || '').join(''), /recovered-output/);
     });
   });
+
+  it('re-warms and retries when SendUserCascadeMessage reports untrusted workspace', async () => {
+    process.env.CASCADE_POLL_INTERVAL_MS = '10';
+    process.env.CASCADE_IDLE_GRACE_MS = '1';
+    process.env.CASCADE_MAX_WAIT_MS = '500';
+    process.env.CASCADE_COLD_STALL_BASE_MS = '500';
+    process.env.CASCADE_WARM_STALL_MS = '500';
+    process.env.GRPC_PROTOCOL = 'connect';
+
+    let startCount = 0;
+    let sendCount = 0;
+
+    await withFakeLanguageServer((stream, headers) => {
+      const chunks = [];
+      stream.on('data', chunk => chunks.push(chunk));
+      stream.on('end', () => {
+        const path = String(headers[':path'] || '');
+        const payload = requestPayload(Buffer.concat(chunks), headers);
+        const method = path.split('/').pop();
+
+        if (method === 'StartCascade') {
+          startCount++;
+          stream.respond({ ':status': 200, 'content-type': headers['content-type'] || 'application/grpc' });
+          stream.end(responseBody(startCascadeResponse('trusted-' + startCount), headers));
+          return;
+        }
+
+        if (method === 'SendUserCascadeMessage') {
+          sendCount++;
+          if (sendCount === 1) {
+            const err = errorBody('untrusted workspace', headers);
+            stream.respond({ ':status': 200, 'content-type': headers['content-type'] || 'application/grpc' });
+            if (err.trailers) stream.additionalHeaders(err.trailers);
+            stream.end(err.body);
+            return;
+          }
+          stream.respond({ ':status': 200, 'content-type': headers['content-type'] || 'application/grpc' });
+          stream.end(responseBody(Buffer.alloc(0), headers));
+          return;
+        }
+
+        if (method === 'GetCascadeTrajectorySteps') {
+          const offset = readStepOffset(payload);
+          stream.respond({ ':status': 200, 'content-type': headers['content-type'] || 'application/grpc' });
+          stream.end(responseBody(trajectoryStepsResponse(offset === 0 ? 'trusted-output' : ''), headers));
+          return;
+        }
+
+        if (method === 'GetCascadeTrajectory') {
+          stream.respond({ ':status': 200, 'content-type': headers['content-type'] || 'application/grpc' });
+          stream.end(responseBody(trajectoryStatusResponse(1), headers));
+          return;
+        }
+
+        if (method === 'GetCascadeTrajectoryGeneratorMetadata') {
+          stream.respond({ ':status': 200, 'content-type': headers['content-type'] || 'application/grpc' });
+          stream.end(responseBody(Buffer.alloc(0), headers));
+          return;
+        }
+
+        stream.respond({ ':status': 200, 'content-type': headers['content-type'] || 'application/grpc' });
+        stream.end(responseBody(Buffer.alloc(0), headers));
+      });
+    }, async (port) => {
+      const { WindsurfClient } = await import('../src/client.js');
+      const client = new WindsurfClient('test-api-key', port, 'csrf-token');
+      const chunks = await client.cascadeChat([
+        { role: 'user', content: 'continue' },
+      ], 0, 'claude-sonnet-4-6');
+
+      assert.equal(sendCount, 2);
+      assert.equal(startCount, 2);
+      assert.equal(chunks.cascadeId, 'trusted-2');
+      assert.match(chunks.map(c => c.text || '').join(''), /trusted-output/);
+    });
+  });
 });

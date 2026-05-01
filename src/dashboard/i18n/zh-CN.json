@@ -204,7 +204,8 @@
     },
     "accountList": {
       "title": "账号列表",
-      "desc": "点击探测按钮可单独更新某个账号的能力信息"
+      "desc": "点击探测按钮可单独更新某个账号的能力信息",
+      "summary": "总账号 {{total}} 个 · 活跃 {{active}} 个 · 异常 {{error}} 个 · 停用 {{disabled}} 个"
     },
     "modelPolicy": {
       "title": "访问策略",
@@ -786,8 +787,9 @@
     "importingDesc": "{{count}} 行，请稍候",
     "complete": "批量导入完成",
     "importFailed": "批量导入失败",
-    "importComplete": "批量导入完成：成功 {{success}} / 失败 {{fail}}",
+    "importComplete": "批量导入完成：成功 {{success}} / 跳过 {{skipped}} / 失败 {{fail}}",
     "success": "成功",
+    "skipped": "跳过",
     "fail": "失败",
     "formatError": "第 {{line}} 行格式错误"
   },
@@ -910,6 +912,8 @@
     "ERR_TEXT_REQUIRED": "缺少 text 字段",
     "ERR_NO_VALID_LINES": "没有有效行",
     "ERR_FORMAT_INVALID": "格式错误 需要 [proxy] email password",
+    "ERR_ACCOUNT_ALREADY_EXISTS": "账号已存在，已跳过",
+    "ERR_DUPLICATE_IN_BATCH": "本批次重复账号，已跳过",
     "ERR_IDTOKEN_REQUIRED": "缺少 idToken",
     "ERR_PROXY_PRIVATE_IP": "代理地址不能指向内网/本机",
     "ERR_PROXY_FORMAT_INVALID": "代理格式错误，应为：protocol://[user:pass@]host:port",
@@ -952,7 +956,7 @@
     "apiKeyGenerated": "API Key 已生成{{autoAdd}}",
     "fail": "✗ 登录失败",
     "batchComplete": "批量导入完成",
-    "batchDesc": "共 {{total}} 个账号，成功 {{success}} 个，失败 {{fail}} 个{{autoAdd}}",
+    "batchDesc": "共 {{total}} 个账号，成功 {{success}} 个，跳过 {{skipped}} 个，失败 {{fail}} 个{{autoAdd}}",
     "tryOther": "换个方式试试",
     "oauthHint": "若你用 Google/GitHub 注册的 Windsurf 账号 此处密码登录不适用 请用页面顶部的 Google / GitHub 登录按钮 或访问 {{link}} 复制 Auth Token 后在「账号管理」页手动添加",
     "fields": {
@@ -962,7 +966,9 @@
       "accountId": "账号 ID"
     },
     "successTitle": "登录成功",
-    "addedToPool": "并加入账号池"
+    "addedToPool": "并加入账号池",
+    "batchPool": "账号池：导入前 {{before}} 个，导入后 {{after}} 个；活跃 {{active}} 个，异常 {{error}} 个",
+    "batchOptions": "批量策略：每个账号间隔 {{delay}}ms，临时失败最多重试 {{retries}} 次"
   },
 
   "timeRange": {

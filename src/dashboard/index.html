@@ -1554,6 +1554,15 @@ window._firebaseOAuth = async function(provider) {
     <div class="section">
       <div class="section-header">
         <div>
+          <div class="section-title">快速接入</div>
+          <div class="section-desc">OpenAI-compatible Base URL、客户端配置和项目归因示例</div>
+        </div>
+      </div>
+      <div class="section-body" id="quick-connect"></div>
+    </div>
+    <div class="section">
+      <div class="section-header">
+        <div>
           <div class="section-title" data-i18n="section.lsStatus.title">Language Server</div>
           <div class="section-desc" data-i18n="section.lsStatus.desc">语言服务器实例状态</div>
         </div>
@@ -1793,6 +1802,7 @@ window._firebaseOAuth = async function(provider) {
         <div>
           <div class="section-title" data-i18n="section.accountList.title">账号列表</div>
           <div class="section-desc" data-i18n="section.accountList.desc">点击探测按钮可单独更新某个账号的能力信息</div>
+          <div class="section-desc" id="account-count-summary"></div>
         </div>
       </div>
       <div class="section-body tight">
@@ -2074,6 +2084,54 @@ window._firebaseOAuth = async function(provider) {
         <div class="table-wrap">
           <table id="account-stats-table">
             <thead><tr><th data-i18n="table.header.accountId">账号 ID</th><th data-i18n="table.header.requests">请求</th><th data-i18n="table.header.success">成功</th><th data-i18n="table.header.errors">错误</th><th data-i18n="table.header.successRate">成功率</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="section">
+      <div class="section-header">
+        <div>
+          <div class="section-title">客户端 Token 用量</div>
+          <div class="section-desc">按请求携带的 Authorization / x-api-key token 分组统计请求数和 token 消耗</div>
+        </div>
+      </div>
+      <div class="section-body tight">
+        <div class="table-wrap">
+          <table id="token-stats-table">
+            <thead><tr><th>Token</th><th>请求</th><th>成功率</th><th>Total</th><th>Input</th><th>Output</th><th>Cache Read</th><th>Cache Write</th><th>最近使用</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="section">
+      <div class="section-header">
+        <div>
+          <div class="section-title">设备/IP 用量</div>
+          <div class="section-desc">同一个 token 从本机和局域网设备调用时，也会按来源设备/IP 分开统计</div>
+        </div>
+      </div>
+      <div class="section-body tight">
+        <div class="table-wrap">
+          <table id="device-stats-table">
+            <thead><tr><th>设备</th><th>IP</th><th>请求</th><th>成功率</th><th>Total</th><th>Input</th><th>Output</th><th>Cache Read</th><th>最近使用</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="section">
+      <div class="section-header">
+        <div>
+          <div class="section-title">项目用量归因</div>
+          <div class="section-desc">客户端可通过 X-Project、X-Client-Project 或 metadata.project 把 token 消耗归到指定项目</div>
+        </div>
+      </div>
+      <div class="section-body tight">
+        <div class="table-wrap">
+          <table id="project-stats-table">
+            <thead><tr><th>项目</th><th>请求</th><th>成功率</th><th>Total</th><th>Input</th><th>Output</th><th>Cache Read</th><th>Cache Write</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -2775,6 +2833,7 @@ const App = {
         <div class="card-sub">${I18n.t('card.responseCache.subtitle', { hits: d.cache?.hits || 0, misses: d.cache?.misses || 0, size: d.cache?.size || 0, max: d.cache?.maxSize || 0 })}</div>
       </div>
     `;
+    this.renderQuickConnect(d.quickConnect || {});
     const instances = ls.instances || [];
     if (instances.length > 0) {
       document.getElementById('ls-status').innerHTML = `
@@ -3012,17 +3071,34 @@ const App = {
       <div class="section-body"><p class="text-sm">${this.esc(errMsg)}</p>${this.getWindsurfLoginFailActions(r)}</div>`);
   },
 
-  renderBatchWindsurfLoginResult(results, autoAdd) {
+  renderBatchWindsurfLoginResult(results, autoAdd, summary = {}) {
     const successCount = results.filter(r => r.success).length;
-    const failCount = results.length - successCount;
+    const skippedCount = results.filter(r => r.skipped).length;
+    const failCount = results.length - successCount - skippedCount;
+    const meta = [];
+    if (summary.beforeAccounts && summary.accounts) {
+      meta.push(I18n.t('loginResult.batchPool', {
+        before: summary.beforeAccounts.total ?? 0,
+        after: summary.accounts.total ?? 0,
+        active: summary.accounts.active ?? 0,
+        error: summary.accounts.error ?? 0,
+      }));
+    }
+    if (summary.delayMs != null || summary.retries != null) {
+      meta.push(I18n.t('loginResult.batchOptions', {
+        delay: summary.delayMs ?? 0,
+        retries: summary.retries ?? 0,
+      }));
+    }
     this.showWindsurfLoginResult(`
         <div class="section-header">
         <div>
           <div class="section-title" style="color:${failCount ? 'var(--warning, #f59e0b)' : 'var(--success)'}">${I18n.t('loginResult.batchComplete')}</div>
-          <div class="section-desc">${I18n.t('loginResult.batchDesc', {total: results.length, success: successCount, fail: failCount, autoAdd: autoAdd ? I18n.t('loginResult.addedToPool') : ''})}</div>
+          <div class="section-desc">${I18n.t('loginResult.batchDesc', {total: results.length, success: successCount, skipped: skippedCount, fail: failCount, autoAdd: autoAdd ? I18n.t('loginResult.addedToPool') : ''})}</div>
         </div>
       </div>
       <div class="section-body tight">
+        ${meta.length ? `<div class="field-hint" style="margin-bottom:10px">${meta.map(x => this.esc(x)).join('<br>')}</div>` : ''}
         <div class="table-wrap">
           <table>
             <thead><tr><th>${I18n.t('table.header.email')}</th><th>${I18n.t('table.header.status')}</th><th>${I18n.t('table.header.note')}</th></tr></thead>
@@ -3030,10 +3106,10 @@ const App = {
               ${results.map(r => `
                 <tr>
                   <td>${this.esc(r.email || '-')}</td>
-                  <td><span class="badge ${r.success ? 'active' : 'error'}">${r.success ? I18n.t('batch.success') : I18n.t('batch.fail')}</span></td>
+                  <td><span class="badge ${r.success ? 'active' : (r.skipped ? 'warn' : 'error')}">${r.success ? I18n.t('batch.success') : (r.skipped ? I18n.t('batch.skipped') : I18n.t('batch.fail'))}</span></td>
                   <td class="text-sm">${r.success
                     ? `<span class="break-all"><code>${this.esc(r.apiKey_masked || (r.apiKey ? r.apiKey.slice(0, 16) + '...' : '-'))}</code>${r.account ? ` · ${I18n.t('table.header.account')} ${this.esc(r.account.id)}` : ''}</span>`
-                    : (() => { const errKey = r.error ? `error.${r.error}` : null; return `<span style="color:var(--error)">${this.esc((errKey && I18n.t(errKey) !== errKey) ? I18n.t(errKey) : (r.error || I18n.t('error.unknown')))}</span>`; })()}</td>
+                    : (() => { const errKey = r.error ? `error.${r.error}` : null; return `<span style="color:${r.skipped ? 'var(--warning, #f59e0b)' : 'var(--error)'}">${this.esc((errKey && I18n.t(errKey) !== errKey) ? I18n.t(errKey) : (r.error || I18n.t('error.unknown')))}${r.account ? ` · ${I18n.t('table.header.account')} ${this.esc(r.account.id)}` : ''}</span>`; })()}</td>
                 </tr>
               `).join('')}
             </tbody>
@@ -3149,7 +3225,7 @@ const App = {
         return this.toast(translatedErr || I18n.t('batch.importFailed'), 'error');
       }
 
-      this.renderBatchWindsurfLoginResult(r.results, autoAdd);
+      this.renderBatchWindsurfLoginResult(r.results, autoAdd, r);
       this.pushLoginHistoryEntries(r.results.map(item => ({
           time: new Date().toISOString(),
           email: item.email,
@@ -3157,7 +3233,7 @@ const App = {
           status: item.success ? 'success' : `error: ${item.error || 'unknown'}`,
           apiKey: item.success ? (item.apiKey_masked || (item.apiKey ? item.apiKey.slice(0, 16) + '...' : undefined)) : undefined,
         })));
-      this.toast(I18n.t('batch.importComplete', {success: r.successCount || 0, fail: r.failCount || 0}), (r.failCount || 0) ? 'info' : 'success');
+      this.toast(I18n.t('batch.importComplete', {success: r.successCount || 0, skipped: r.skippedCount || 0, fail: r.failCount || 0}), (r.failCount || 0) ? 'info' : 'success');
       if ((r.successCount || 0) > 0) {
         this.loadAccounts();
         document.getElementById('wl-batch-input').value = '';
@@ -3207,6 +3283,20 @@ const App = {
       this.api('GET', '/accounts'),
       this.api('GET', '/overview').catch(() => null),
     ]);
+    const accountList = d.accounts || [];
+    const totalAccounts = Number.isFinite(d.total) ? d.total : accountList.length;
+    const activeAccounts = Number.isFinite(d.active) ? d.active : accountList.filter(a => a.status === 'active').length;
+    const errorAccounts = Number.isFinite(d.error) ? d.error : accountList.filter(a => a.status === 'error').length;
+    const disabledAccounts = accountList.filter(a => a.status === 'disabled').length;
+    const summaryEl = document.getElementById('account-count-summary');
+    if (summaryEl) {
+      summaryEl.textContent = I18n.t('section.accountList.summary', {
+        total: totalAccounts,
+        active: activeAccounts,
+        error: errorAccounts,
+        disabled: disabledAccounts,
+      });
+    }
     const instances = ov?.langServer?.instances || [];
     const poolCard = document.getElementById('ls-pool-card');
     if (poolCard) {
@@ -3240,7 +3330,7 @@ const App = {
     }
     const tbody = document.querySelector('#accounts-table tbody');
     const tierLabel = { pro: 'PRO', free: 'FREE', expired: I18n.t('tier.expiredLabel'), unknown: I18n.t('tier.unknown') };
-    tbody.innerHTML = (d.accounts || []).map(a => {
+    tbody.innerHTML = accountList.map(a => {
       const tier = a.tier || 'unknown';
       // GetUserStatus snapshot — authoritative plan/trial/credit info (may be null)
       const us = a.userStatus || null;
@@ -4209,6 +4299,56 @@ const App = {
     if (this._lastStatsData) this.renderMainChart(this._lastStatsData);
   },
 
+  renderQuickConnect(q) {
+    const el = document.getElementById('quick-connect');
+    if (!el) return;
+    const baseUrl = q.baseUrl || (location.origin + '/v1');
+    const modelsUrl = q.modelsUrl || `${baseUrl}/models`;
+    const model = q.model || 'gpt-5.5';
+    const apiKey = q.apiKeyMasked || '<API_KEY>';
+    const lan = (q.lanBaseUrls || []).map(u => `<code>${this.esc(u)}</code>`).join(' ');
+    const suggestedModels = (q.suggestedModels || [model]).map(m => `<code>${this.esc(m)}</code>`).join(' ');
+    const curl = q.examples?.curl || '';
+    const node = q.examples?.node || '';
+    const python = q.examples?.python || '';
+    el.innerHTML = `
+      <div style="display:grid;gap:12px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px">
+          <div class="detail-card"><div class="detail-card-head"><span class="dot"></span>本机 Base URL</div><code class="break-all">${this.esc(baseUrl)}</code><div style="margin-top:8px"><button class="btn btn-xs btn-outline" onclick="App.copyText('${this.escJsAttr(baseUrl)}')">复制</button></div></div>
+          <div class="detail-card"><div class="detail-card-head"><span class="dot" style="background:var(--info)"></span>客户端配置</div><div class="detail-kv"><span class="k">API Key</span><span class="v"><code>${this.esc(apiKey)}</code></span><span class="k">示例模型</span><span class="v"><code>${this.esc(model)}</code></span><span class="k">模型列表</span><span class="v"><code>${this.esc(modelsUrl)}</code></span><span class="k">客户端 Token</span><span class="v">${q.apiKeyCount || 0} configured</span></div></div>
+          <div class="detail-card"><div class="detail-card-head"><span class="dot" style="background:var(--success)"></span>局域网 Base URL</div><div style="display:grid;gap:4px">${lan || '<span class="text-muted">未检测到局域网 IPv4</span>'}</div></div>
+        </div>
+        <div class="field-hint">模型不在这里锁定；客户端每次请求的 <code>model</code> 字段决定使用哪个模型。可选模型可通过 <code>${this.esc(modelsUrl)}</code> 获取，常用示例：${suggestedModels}</div>
+        <div class="field-hint">归因方式：不同 Authorization token 会分开统计；同 token 的本机/局域网设备按 IP + User-Agent 分开统计；项目可传 <code>X-Project: my-project</code>、<code>X-Client-Project</code> 或请求体 <code>metadata.project</code>。</div>
+        <details><summary>curl 示例</summary><pre style="white-space:pre-wrap;margin-top:8px">${this.esc(curl)}</pre><button class="btn btn-xs btn-outline" onclick="App.copyText('${this.escJsAttr(curl)}')">复制 curl</button></details>
+        <details><summary>Node.js 示例</summary><pre style="white-space:pre-wrap;margin-top:8px">${this.esc(node)}</pre><button class="btn btn-xs btn-outline" onclick="App.copyText('${this.escJsAttr(node)}')">复制 Node</button></details>
+        <details><summary>Python 示例</summary><pre style="white-space:pre-wrap;margin-top:8px">${this.esc(python)}</pre><button class="btn btn-xs btn-outline" onclick="App.copyText('${this.escJsAttr(python)}')">复制 Python</button></details>
+      </div>`;
+  },
+
+  renderUsageTable(tableId, rows, kind) {
+    const tbody = document.querySelector(`#${tableId} tbody`);
+    if (!tbody) return;
+    const entries = Object.entries(rows || {}).sort(([, a], [, b]) => ((b.usage?.totalTokens || 0) - (a.usage?.totalTokens || 0)) || ((b.requests || 0) - (a.requests || 0)));
+    const fmt = v => this.fmtNumber(v || 0);
+    const fmtTs = ts => ts ? new Date(ts).toLocaleString() : '-';
+    const rate = s => s.requests > 0 ? ((s.success / s.requests) * 100).toFixed(1) + '%' : '0.0%';
+    if (!entries.length) {
+      const cols = kind === 'project' ? 8 : 9;
+      tbody.innerHTML = `<tr class="empty-row"><td colspan="${cols}">暂无用量数据</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = entries.map(([id, s]) => {
+      const u = s.usage || {};
+      if (kind === 'device') {
+        return `<tr><td><code>${this.esc(s.deviceLabel || s.label || id)}</code></td><td>${this.esc(s.ip || '-')}</td><td>${fmt(s.requests)}</td><td>${rate(s)}</td><td>${fmt(u.totalTokens)}</td><td>${fmt(u.promptTokens)}</td><td>${fmt(u.completionTokens)}</td><td>${fmt(u.cacheReadTokens)}</td><td class="text-sm nowrap">${fmtTs(s.lastSeen)}</td></tr>`;
+      }
+      if (kind === 'project') {
+        return `<tr><td><code>${this.esc(s.project || s.label || id)}</code></td><td>${fmt(s.requests)}</td><td>${rate(s)}</td><td>${fmt(u.totalTokens)}</td><td>${fmt(u.promptTokens)}</td><td>${fmt(u.completionTokens)}</td><td>${fmt(u.cacheReadTokens)}</td><td>${fmt(u.cacheWriteTokens)}</td></tr>`;
+      }
+      return `<tr><td><code title="${this.esc(id)}">${this.esc(s.tokenLabel || s.label || id)}</code></td><td>${fmt(s.requests)}</td><td>${rate(s)}</td><td>${fmt(u.totalTokens)}</td><td>${fmt(u.promptTokens)}</td><td>${fmt(u.completionTokens)}</td><td>${fmt(u.cacheReadTokens)}</td><td>${fmt(u.cacheWriteTokens)}</td><td class="text-sm nowrap">${fmtTs(s.lastSeen)}</td></tr>`;
+    }).join('');
+  },
   async loadStats() {
     const d = await this.api('GET', '/stats');
     this._lastStatsData = d;
@@ -4219,12 +4359,15 @@ const App = {
     const avgP95 = allP95.length ? Math.round(allP95.reduce((a,b)=>a+b,0) / allP95.length) : 0;
     const uptimeSec = d.startedAt ? Math.floor((Date.now() - d.startedAt) / 1000) : 0;
     const fmtUptime = s => s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s/60)}m` : s < 86400 ? `${(s/3600).toFixed(1)}h` : `${(s/86400).toFixed(1)}d`;
+    const usage = d.usageTotals || d.usage || {};
 
     document.getElementById('stats-cards').innerHTML = `
       <div class="card info"><div class="card-header"><div class="card-title">${I18n.t('card.stats.title')}</div></div><div class="card-value">${totalReq}</div><div class="card-sub">${I18n.t('card.stats.subtitle', { time: fmtUptime(uptimeSec) })}</div></div>
       <div class="card success"><div class="card-header"><div class="card-title">${I18n.t('card.success.title')}</div></div><div class="card-value">${d.successCount || 0}</div><div class="card-sub">${I18n.t('card.success.subtitle', { rate: successRate })}</div></div>
       <div class="card error"><div class="card-header"><div class="card-title">${I18n.t('card.errors.title')}</div></div><div class="card-value">${d.errorCount || 0}</div><div class="card-sub">${I18n.t('card.errors.subtitle', { rate: totalReq > 0 ? (100-Number(successRate)).toFixed(1) : '0.0' })}</div></div>
       <div class="card accent"><div class="card-header"><div class="card-title">${I18n.t('card.p95Latency.title')}</div></div><div class="card-value">${avgP95}<span style="font-size:14px;font-weight:400;margin-left:4px">ms</span></div><div class="card-sub">${I18n.t('card.p95Latency.subtitle', { count: allP95.length })}</div></div>
+      <div class="card info"><div class="card-header"><div class="card-title">总 Token</div></div><div class="card-value">${this.fmtNumber(usage.totalTokens || 0)}</div><div class="card-sub">Input ${this.fmtNumber(usage.promptTokens || 0)}  Output ${this.fmtNumber(usage.completionTokens || 0)}</div></div>
+      <div class="card"><div class="card-header"><div class="card-title">缓存 Token</div></div><div class="card-value">${this.fmtNumber(usage.cacheReadTokens || 0)}</div><div class="card-sub">Read ${this.fmtNumber(usage.cacheReadTokens || 0)}  Write ${this.fmtNumber(usage.cacheWriteTokens || 0)}</div></div>
     `;
 
     const models = d.modelCounts || {};
@@ -4261,6 +4404,10 @@ const App = {
         </tr>`;
       }).join('') || `<tr class="empty-row"><td colspan="5">${I18n.t('table.empty.noAccountRequestData')}</td></tr>`;
     }
+
+    this.renderUsageTable('token-stats-table', d.tokenCounts || {}, 'token');
+    this.renderUsageTable('device-stats-table', d.deviceCounts || {}, 'device');
+    this.renderUsageTable('project-stats-table', d.projectCounts || {}, 'project');
 
     this.renderMainChart(d);
     this.renderModelPie(d);
@@ -5076,6 +5223,7 @@ const App = {
   },
 
   // ─── Helpers ─────────────────────────────────
+  fmtNumber(n) { return Number(n || 0).toLocaleString(); },
   fmtDuration(secs) {
     const d = Math.floor(secs / 86400), h = Math.floor((secs % 86400) / 3600), m = Math.floor((secs % 3600) / 60);
     const s = Math.floor(secs % 60);
@@ -5083,7 +5231,29 @@ const App = {
     if (h > 0) return `${h}${I18n.t('time.hour')} ${m}${I18n.t('time.minute')}`;
     return `${m}${I18n.t('time.minute')} ${s}${I18n.t('time.second')}`;
   },
-  async revealAndCopyKey(accountId) {
+  copyText(text) {
+    const fallback = () => {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        const ok = document.execCommand('copy');
+        ta.remove();
+        this.toast(ok ? '已复制' : I18n.t('toast.copyFailed'), ok ? 'success' : 'error');
+      } catch (e) {
+        this.toast(I18n.t('toast.copyFailedError', {error: e.message}), 'error');
+      }
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(() => this.toast('已复制')).catch(fallback);
+    } else {
+      fallback();
+    }
+  },  async revealAndCopyKey(accountId) {
     try {
       const r = await this.api('POST', `/account/${encodeURIComponent(accountId)}/reveal-key`);
       if (r?.apiKey) this.copyKey(r.apiKey);

@@ -108,6 +108,12 @@ export const MODELS = {
   'gpt-5.4-mini-medium':            { name: 'gpt-5.4-mini-medium',            provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-4-mini-medium', credit: 1.5 },
   'gpt-5.4-mini-high':              { name: 'gpt-5.4-mini-high',              provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-4-mini-high', credit: 4.5 },
   'gpt-5.4-mini-xhigh':             { name: 'gpt-5.4-mini-xhigh',             provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-4-mini-xhigh', credit: 12 },
+  'gpt-5.5':                        { name: 'gpt-5.5',                        provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-5-medium', credit: 2 },
+  'gpt-5.5-none':                   { name: 'gpt-5.5-none',                   provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-5-none', credit: 0.5 },
+  'gpt-5.5-low':                    { name: 'gpt-5.5-low',                    provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-5-low', credit: 1 },
+  'gpt-5.5-medium':                 { name: 'gpt-5.5-medium',                 provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-5-medium', credit: 2 },
+  'gpt-5.5-high':                   { name: 'gpt-5.5-high',                   provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-5-high', credit: 4 },
+  'gpt-5.5-xhigh':                  { name: 'gpt-5.5-xhigh',                  provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-5-xhigh', credit: 8 },
 
   // GPT-OSS
   'gpt-oss-120b':                   { name: 'gpt-oss-120b',                   provider: 'openai', enumValue: 0,   modelUid: 'MODEL_GPT_OSS_120B', credit: 0.25 },
@@ -221,6 +227,13 @@ _lookup.set('gpt-5-4-mini-low', 'gpt-5.4-mini-low');
 _lookup.set('gpt-5-4-mini-medium', 'gpt-5.4-mini-medium');
 _lookup.set('gpt-5-4-mini-high', 'gpt-5.4-mini-high');
 _lookup.set('gpt-5-4-mini-xhigh', 'gpt-5.4-mini-xhigh');
+_lookup.set('gpt5.5', 'gpt-5.5');
+_lookup.set('gpt-5-5', 'gpt-5.5');
+_lookup.set('gpt-5-5-none', 'gpt-5.5-none');
+_lookup.set('gpt-5-5-low', 'gpt-5.5-low');
+_lookup.set('gpt-5-5-medium', 'gpt-5.5-medium');
+_lookup.set('gpt-5-5-high', 'gpt-5.5-high');
+_lookup.set('gpt-5-5-xhigh', 'gpt-5.5-xhigh');
 
 // Anthropic official dated names — Cursor / Claude Code / Anthropic SDK
 // all send these verbatim. Map each to our short key so the same client
@@ -308,6 +321,35 @@ const CURSOR_ALIASES = {
 };
 for (const [k, v] of Object.entries(CURSOR_ALIASES)) _lookup.set(k, v);
 
+function publicModelName(name) {
+  const raw = String(name || '').trim();
+  if (!raw) return raw;
+  const lower = raw.toLowerCase();
+  const asW = suffix => /^[0-9]/.test(suffix) ? `w${suffix}` : `w-${suffix}`;
+  if (lower.startsWith('gpt-')) return asW(raw.slice(4));
+  if (lower.startsWith('gpt')) return asW(raw.slice(3).replace(/^-/, ''));
+  if (lower.startsWith('claude-')) return asW(raw.slice(7));
+  return `w-${raw}`;
+}
+
+function registerPublicModelAlias(id, info = MODELS[id]) {
+  if (!id || !info) return;
+  const alias = publicModelName(info.name || id);
+  if (!alias) return;
+  _lookup.set(alias, id);
+  _lookup.set(alias.toLowerCase(), id);
+}
+
+for (const [id, info] of Object.entries(MODELS)) registerPublicModelAlias(id, info);
+
+export function toPublicModelId(name) {
+  if (!name) return name;
+  const raw = String(name);
+  const internal = MODELS[raw] ? raw : (_lookup.get(raw) || _lookup.get(raw.toLowerCase()));
+  const info = internal ? MODELS[internal] : null;
+  return publicModelName(info?.name || raw);
+}
+
 /** Resolve user model name → internal model key. */
 export function resolveModel(name) {
   if (!name) return null;
@@ -374,7 +416,7 @@ export function listModels() {
   return Object.entries(MODELS)
     .filter(([, info]) => !info.deprecated)
     .map(([id, info]) => ({
-      id: info.name,
+      id: toPublicModelId(id),
       object: 'model',
       created: ts,
       owned_by: info.provider,
@@ -420,6 +462,7 @@ export function mergeCloudModels(configs) {
     _lookup.set(key, key);
     _lookup.set(uid, key);
     _lookup.set(uid.toLowerCase(), key);
+    registerPublicModelAlias(key, MODELS[key]);
     added++;
   }
   return added;

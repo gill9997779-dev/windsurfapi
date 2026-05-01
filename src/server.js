@@ -29,7 +29,7 @@ import { handleModels } from './handlers/models.js';
 import { handleDashboardApi } from './dashboard/api.js';
 import { config, log } from './config.js';
 import { VERSION } from './version.js';
-import { callerKeyFromRequest } from './caller-key.js';
+import { callerKeyFromRequest, requestAttributionFromRequest } from './caller-key.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..');
@@ -83,7 +83,7 @@ function json(res, status, body) {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key, anthropic-version, x-project, x-client-project, x-project-id, x-client-name, x-device-name',
     // Per-request dynamic responses must not be cached by intermediaries.
     // Some upstream aggregators (e.g. sub2api, #97) priority-cache responses
     // when they don't see an explicit Cache-Control directive and serve
@@ -101,7 +101,7 @@ async function route(req, res) {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key, anthropic-version',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key, anthropic-version, x-project, x-client-project, x-project-id, x-client-name, x-device-name',
     });
     return res.end();
   }
@@ -305,8 +305,12 @@ async function route(req, res) {
       return json(res, 400, { error: { message: 'messages must contain at least 1 item', type: 'invalid_request' } });
     }
 
+    const apiKey = extractToken(req);
     const reqStartedAt = Date.now();
-    const result = await handleChatCompletions(body, { callerKey: callerKeyFromRequest(req, extractToken(req), body) });
+    const result = await handleChatCompletions(body, {
+      callerKey: callerKeyFromRequest(req, apiKey, body),
+      statsContext: requestAttributionFromRequest(req, apiKey, body),
+    });
     const processingMs = Date.now() - reqStartedAt;
     const modelHeaders = {
       'x-request-id': 'req-' + randomUUID(),
@@ -348,8 +352,14 @@ async function route(req, res) {
       return json(res, 400, { error: { message: 'input is required', type: 'invalid_request' } });
     }
 
+    const apiKey = extractToken(req);
     const reqStartedAt = Date.now();
-    const result = await handleResponses(body, { context: { callerKey: callerKeyFromRequest(req, extractToken(req), body) } });
+    const result = await handleResponses(body, {
+      context: {
+        callerKey: callerKeyFromRequest(req, apiKey, body),
+        statsContext: requestAttributionFromRequest(req, apiKey, body),
+      },
+    });
     const processingMs = Date.now() - reqStartedAt;
     const modelHeaders = {
       'x-request-id': 'req-' + randomUUID(),
@@ -383,7 +393,11 @@ async function route(req, res) {
     if (!Array.isArray(body.messages) || body.messages.length === 0) {
       return json(res, 400, { type: 'error', error: { type: 'invalid_request_error', message: 'messages must be a non-empty array' } });
     }
-    const result = await handleMessages(body, { callerKey: callerKeyFromRequest(req, extractToken(req), body) });
+    const apiKey = extractToken(req);
+    const result = await handleMessages(body, {
+      callerKey: callerKeyFromRequest(req, apiKey, body),
+      statsContext: requestAttributionFromRequest(req, apiKey, body),
+    });
     const anthropicHeaders = {
       'request-id': 'req-' + randomUUID(),
       'anthropic-model': body.model || '',

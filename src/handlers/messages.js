@@ -630,7 +630,15 @@ export async function handleMessages(body, context = {}) {
   // do not send metadata.user_id keep the original callerKey unchanged.
   const subKey = extractCallerSubKey(body);
   const effectiveContext = subKey
-    ? { ...context, callerKey: `${context.callerKey || ''}:user:${subKey}` }
+    ? {
+        ...context,
+        callerKey: `${context.callerKey || ''}:user:${subKey}`,
+        statsContext: context.statsContext ? {
+          ...context.statsContext,
+          deviceId: `device:${subKey}`,
+          deviceLabel: context.statsContext.deviceLabel || `device:${subKey}`,
+        } : context.statsContext,
+      }
     : context;
 
   if (!wantStream) {

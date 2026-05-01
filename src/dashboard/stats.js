@@ -16,6 +16,10 @@ const _state = {
   errorCount: 0,
   modelCounts: {},    // { "gpt-4o-mini": { requests, success, errors, totalMs } }
   accountCounts: {},  // { "abc123": { requests, success, errors } }
+  tokenCounts: {},
+  deviceCounts: {},
+  projectCounts: {},
+  usageTotals: {},
   hourlyBuckets: [],  // [{ hour: "2026-04-09T07:00:00Z", requests, errors }]
 };
 
@@ -44,28 +48,137 @@ function getHourKey() {
   return d.toISOString();
 }
 
+function emptyUsage() {
+  return {
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    requestsWithUsage: 0,
+  };
+}
+
+function ensureUsage(target) {
+  if (!target.usage) target.usage = emptyUsage();
+  for (const [k, v] of Object.entries(emptyUsage())) {
+    if (!Number.isFinite(Number(target.usage[k]))) target.usage[k] = v;
+  }
+  return target.usage;
+}
+
+function ensureCounter(target) {
+  if (!Number.isFinite(Number(target.requests))) target.requests = 0;
+  if (!Number.isFinite(Number(target.success))) target.success = 0;
+  if (!Number.isFinite(Number(target.errors))) target.errors = 0;
+  if (!Number.isFinite(Number(target.totalMs))) target.totalMs = 0;
+  if (!Array.isArray(target.recentMs)) target.recentMs = [];
+  ensureUsage(target);
+  return target;
+}
+
+function ensureStateShape() {
+  if (!_state.modelCounts) _state.modelCounts = {};
+  if (!_state.accountCounts) _state.accountCounts = {};
+  if (!_state.tokenCounts) _state.tokenCounts = {};
+  if (!_state.deviceCounts) _state.deviceCounts = {};
+  if (!_state.projectCounts) _state.projectCounts = {};
+  if (!_state.usageTotals) _state.usageTotals = emptyUsage();
+  ensureUsage(_state);
+}
+
+ensureStateShape();
+
+function num(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+}
+
+function normalizeUsage(usage) {
+  if (!usage || typeof usage !== 'object') return emptyUsage();
+  const cacheCreation = usage.cache_creation || {};
+  const cacheWrite = num(usage.cache_creation_input_tokens)
+    || num(cacheCreation.ephemeral_5m_input_tokens) + num(cacheCreation.ephemeral_1h_input_tokens);
+  const cacheRead = num(usage.cache_read_input_tokens)
+    || num(usage.prompt_tokens_details?.cached_tokens);
+  const promptTokens = num(usage.prompt_tokens ?? usage.input_tokens);
+  const completionTokens = num(usage.completion_tokens ?? usage.output_tokens);
+  const totalTokens = num(usage.total_tokens) || promptTokens + completionTokens;
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    cacheReadTokens: cacheRead,
+    cacheWriteTokens: cacheWrite,
+    requestsWithUsage: totalTokens || promptTokens || completionTokens || cacheRead || cacheWrite ? 1 : 0,
+  };
+}
+
+function addUsage(target, usage) {
+  const dst = ensureUsage(target);
+  const src = normalizeUsage(usage);
+  dst.promptTokens += src.promptTokens;
+  dst.completionTokens += src.completionTokens;
+  dst.totalTokens += src.totalTokens;
+  dst.cacheReadTokens += src.cacheReadTokens;
+  dst.cacheWriteTokens += src.cacheWriteTokens;
+  dst.requestsWithUsage += src.requestsWithUsage;
+}
+
+function addCounter(target, success, durationMs, usage) {
+  ensureCounter(target);
+  target.requests++;
+  if (success) target.success++;
+  else target.errors++;
+  target.totalMs += durationMs;
+  if (durationMs > 0) {
+    target.recentMs.push(durationMs);
+    if (target.recentMs.length > 200) target.recentMs.shift();
+  }
+  addUsage(target, usage);
+}
+
+function safeLabel(value, fallback) {
+  const text = String(value || '').trim().slice(0, 120);
+  return text || fallback;
+}
+
+function callerMeta(caller) {
+  return {
+    tokenId: safeLabel(caller?.tokenId, 'anonymous'),
+    tokenLabel: safeLabel(caller?.tokenLabel, 'anonymous'),
+    deviceId: safeLabel(caller?.deviceId, 'unknown'),
+    deviceLabel: safeLabel(caller?.deviceLabel, 'unknown'),
+    ip: safeLabel(caller?.ip, 'unknown'),
+    userAgent: safeLabel(caller?.userAgent, ''),
+    project: safeLabel(caller?.project, 'default'),
+  };
+}
+
+function setMeta(target, meta) {
+  target.label = meta.label || target.label || '';
+  target.lastSeen = Date.now();
+  for (const [k, v] of Object.entries(meta)) {
+    if (v != null && v !== '') target[k] = v;
+  }
+}
+
 /**
  * Record a completed request.
  */
-export function recordRequest(model, success, durationMs, accountId) {
+export function recordRequest(model, success, durationMs, accountId, details = {}) {
+  ensureStateShape();
   _state.totalRequests++;
   if (success) _state.successCount++;
   else _state.errorCount++;
+  addUsage(_state, details.usage);
 
   // Per-model stats (includes a small ring buffer for p50/p95 latency)
   if (!_state.modelCounts[model]) {
     _state.modelCounts[model] = { requests: 0, success: 0, errors: 0, totalMs: 0, recentMs: [] };
   }
   const mc = _state.modelCounts[model];
-  mc.requests++;
-  if (success) mc.success++;
-  else mc.errors++;
-  mc.totalMs += durationMs;
-  if (!mc.recentMs) mc.recentMs = [];
-  if (durationMs > 0) {
-    mc.recentMs.push(durationMs);
-    if (mc.recentMs.length > 200) mc.recentMs.shift();
-  }
+  addCounter(mc, success, durationMs, details.usage);
 
   // Per-account stats
   if (accountId) {
@@ -74,10 +187,21 @@ export function recordRequest(model, success, durationMs, accountId) {
       _state.accountCounts[aid] = { requests: 0, success: 0, errors: 0 };
     }
     const ac = _state.accountCounts[aid];
-    ac.requests++;
-    if (success) ac.success++;
-    else ac.errors++;
+    addCounter(ac, success, durationMs, details.usage);
   }
+
+  const meta = callerMeta(details.caller);
+  if (!_state.tokenCounts[meta.tokenId]) _state.tokenCounts[meta.tokenId] = { requests: 0, success: 0, errors: 0, totalMs: 0, recentMs: [] };
+  setMeta(_state.tokenCounts[meta.tokenId], { label: meta.tokenLabel, tokenLabel: meta.tokenLabel });
+  addCounter(_state.tokenCounts[meta.tokenId], success, durationMs, details.usage);
+
+  if (!_state.deviceCounts[meta.deviceId]) _state.deviceCounts[meta.deviceId] = { requests: 0, success: 0, errors: 0, totalMs: 0, recentMs: [] };
+  setMeta(_state.deviceCounts[meta.deviceId], { label: meta.deviceLabel, deviceLabel: meta.deviceLabel, ip: meta.ip, userAgent: meta.userAgent });
+  addCounter(_state.deviceCounts[meta.deviceId], success, durationMs, details.usage);
+
+  if (!_state.projectCounts[meta.project]) _state.projectCounts[meta.project] = { requests: 0, success: 0, errors: 0, totalMs: 0, recentMs: [] };
+  setMeta(_state.projectCounts[meta.project], { label: meta.project, project: meta.project });
+  addCounter(_state.projectCounts[meta.project], success, durationMs, details.usage);
 
   // Hourly bucket
   const hourKey = getHourKey();
@@ -90,6 +214,7 @@ export function recordRequest(model, success, durationMs, accountId) {
   }
   bucket.requests++;
   if (!success) bucket.errors++;
+  addUsage(bucket, details.usage);
 
   scheduleSave();
 }
@@ -102,6 +227,7 @@ function percentile(sortedArr, p) {
 
 /** Get all stats, with computed latency percentiles per model. */
 export function getStats() {
+  ensureStateShape();
   const out = { ..._state };
   out.modelCounts = {};
   for (const [m, s] of Object.entries(_state.modelCounts)) {
@@ -114,8 +240,14 @@ export function getStats() {
       avgMs: s.requests > 0 ? Math.round(s.totalMs / s.requests) : 0,
       p50Ms: Math.round(percentile(sorted, 0.5)),
       p95Ms: Math.round(percentile(sorted, 0.95)),
+      usage: ensureUsage(s),
     };
   }
+  out.accountCounts = Object.fromEntries(Object.entries(_state.accountCounts || {}).map(([k, s]) => [k, { ...ensureCounter(s), recentMs: undefined }]));
+  out.tokenCounts = Object.fromEntries(Object.entries(_state.tokenCounts || {}).map(([k, s]) => [k, { ...ensureCounter(s), recentMs: undefined }]));
+  out.deviceCounts = Object.fromEntries(Object.entries(_state.deviceCounts || {}).map(([k, s]) => [k, { ...ensureCounter(s), recentMs: undefined }]));
+  out.projectCounts = Object.fromEntries(Object.entries(_state.projectCounts || {}).map(([k, s]) => [k, { ...ensureCounter(s), recentMs: undefined }]));
+  out.usageTotals = ensureUsage(_state);
   return out;
 }
 
@@ -126,6 +258,11 @@ export function resetStats() {
   _state.errorCount = 0;
   _state.modelCounts = {};
   _state.accountCounts = {};
+  _state.tokenCounts = {};
+  _state.deviceCounts = {};
+  _state.projectCounts = {};
+  _state.usageTotals = emptyUsage();
+  _state.usage = emptyUsage();
   _state.hourlyBuckets = [];
   _state.startedAt = Date.now();
   scheduleSave();

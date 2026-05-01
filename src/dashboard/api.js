@@ -6,6 +6,7 @@
 import { config, log } from '../config.js';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { networkInterfaces } from 'node:os';
 import {
   getAccountList, getAccountCount, addAccountByKey, addAccountByToken,
   removeAccount, setAccountStatus, resetAccountErrors, updateAccountLabel,
@@ -22,7 +23,7 @@ import { getExperimental, setExperimental, getSystemPrompts, setSystemPrompts, r
 import { poolStats as convPoolStats, poolClear as convPoolClear } from '../conversation-pool.js';
 import { getLogs, subscribeToLogs, unsubscribeFromLogs } from './logger.js';
 import { getProxyConfig, getProxyConfigMasked, setGlobalProxy, setAccountProxy, removeProxy, getEffectiveProxy } from './proxy-config.js';
-import { MODELS, MODEL_TIER_ACCESS as _TIER_TABLE, getTierModels as _getTierModels } from '../models.js';
+import { MODELS, MODEL_TIER_ACCESS as _TIER_TABLE, getTierModels as _getTierModels, toPublicModelId } from '../models.js';
 import { windsurfLogin, refreshFirebaseToken, reRegisterWithCodeium } from './windsurf-login.js';
 import { getModelAccessConfig, setModelAccessMode, setModelAccessList, addModelToList, removeModelFromList } from './model-access.js';
 import { checkMessageRateLimit } from '../windsurf-api.js';
@@ -65,6 +66,15 @@ function json(res, status, body) {
   res.end(data);
 }
 
+function configuredClientApiKeys() {
+  return Array.isArray(config.apiKeys) ? config.apiKeys : (config.apiKey ? [config.apiKey] : []);
+}
+
+function matchesClientApiKey(value) {
+  const keys = configuredClientApiKeys();
+  return keys.some(k => safeEqualString(String(value || ''), k));
+}
+
 function checkAuth(req) {
   // Header-only auth. logs/stream switched from EventSource to fetch +
   // ReadableStream months ago, so the EventSource exception is gone and
@@ -72,11 +82,120 @@ function checkAuth(req) {
   // browser history without any callers needing them.
   const pw = req.headers['x-dashboard-password'] || '';
   if (config.dashboardPassword) return safeEqualString(pw, config.dashboardPassword);
-  if (config.apiKey) return safeEqualString(pw, config.apiKey);
+  if (configuredClientApiKeys().length) return matchesClientApiKey(pw);
   return isLocalBindHost();
 }
 
-async function processWindsurfLogin({ email, password, loginProxy, autoAdd }) {
+function requestOrigin(req) {
+  const proto = String(req?.headers?.['x-forwarded-proto'] || 'http').split(',')[0].trim() || 'http';
+  const host = String(req?.headers?.['x-forwarded-host'] || req?.headers?.host || `127.0.0.1:${config.port}`).split(',')[0].trim();
+  return `${proto}://${host}`;
+}
+
+function lanBaseUrls() {
+  const urls = [];
+  for (const list of Object.values(networkInterfaces())) {
+    for (const n of list || []) {
+      if (n.family === 'IPv4' && !n.internal) urls.push(`http://${n.address}:${config.port}/v1`);
+    }
+  }
+  return [...new Set(urls)];
+}
+
+function buildQuickConnect(req) {
+  const origin = requestOrigin(req);
+  const baseUrl = `${origin}/v1`;
+  const apiKey = config.apiKey || configuredClientApiKeys()[0] || '';
+  const internalModel = config.defaultModel || 'gpt-5.5';
+  const model = toPublicModelId(internalModel);
+  const keyPlaceholder = apiKey ? '<API_KEY>' : '<SET_API_KEY_IN_ENV>';
+  const project = 'my-project';
+  const suggestedModels = [internalModel, 'gpt-5.2', 'gpt-5.1-codex-medium', 'gpt-5-codex', 'claude-4.5-sonnet-thinking', 'claude-sonnet-4.6']
+    .filter((m, i, arr) => MODELS[m] && arr.indexOf(m) === i)
+    .map(m => toPublicModelId(m));
+  return {
+    baseUrl,
+    modelsUrl: `${baseUrl}/models`,
+    lanBaseUrls: lanBaseUrls(),
+    apiKeyConfigured: !!apiKey,
+    apiKeyMasked: apiKey ? maskApiKey(apiKey) : '',
+    apiKeyCount: configuredClientApiKeys().length,
+    model,
+    suggestedModels,
+    projectHeader: 'X-Project',
+    clientNameHeader: 'X-Client-Name',
+    examples: {
+      cursor: { baseUrl, apiKey: keyPlaceholder, model },
+      curl: `curl ${baseUrl}/chat/completions -H "Authorization: Bearer ${keyPlaceholder}" -H "Content-Type: application/json" -H "X-Project: ${project}" -d "{\\"model\\":\\"${model}\\",\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"hi\\"}]}"`,
+      node: `import OpenAI from 'openai';\nconst client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, baseURL: '${baseUrl}' });\nconst res = await client.chat.completions.create({ model: '${model}', messages: [{ role: 'user', content: 'hi' }], metadata: { project: '${project}' } });`,
+      python: `from openai import OpenAI\nclient = OpenAI(api_key=\"${keyPlaceholder}\", base_url=\"${baseUrl}\")\nres = client.chat.completions.create(model=\"${model}\", messages=[{\"role\":\"user\",\"content\":\"hi\"}], extra_headers={\"X-Project\":\"${project}\"})`,
+    },
+  };
+}
+
+const batchLoginDefaults = {
+  delayMs: 3000,
+  retries: 3,
+};
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function clampInt(value, fallback, min, max) {
+  const n = Number.parseInt(value, 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
+function normalizeBatchEmail(value) {
+  const email = String(value || '').trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '';
+}
+
+export function shouldSkipDuplicateBatchEmail(seenEmails, email, autoAdd = true) {
+  const normalizedEmail = normalizeBatchEmail(email);
+  if (autoAdd === false || !normalizedEmail) return { skip: false, normalizedEmail };
+  if (seenEmails.has(normalizedEmail)) return { skip: true, normalizedEmail };
+  seenEmails.add(normalizedEmail);
+  return { skip: false, normalizedEmail };
+}
+
+function skippedBatchResult(index, email, error, account = null) {
+  return {
+    success: false,
+    skipped: true,
+    index,
+    email,
+    error,
+    account: account ? { id: account.id, email: account.email, status: account.status } : null,
+  };
+}
+
+function isTransientLoginError(err) {
+  if (!err || err.isAuthFail) return false;
+  const msg = String(err.message || err.code || '');
+  if (/ERR_INVALID|ERR_EMAIL_NOT_FOUND|ERR_NO_PASSWORD_SET|ERR_USER_DISABLED|ERR_EMAIL_PASSWORD_REQUIRED|ERR_PROXY_FORMAT_INVALID/.test(msg)) return false;
+  return /timeout|ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket|network|upstream|Windsurf upstream|503|504|500|429|fetch failed/i.test(msg);
+}
+
+async function processWindsurfLoginWithRetry(args, { retries, delayMs }) {
+  let lastErr = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const result = await processWindsurfLogin(args);
+      result.attempts = attempt + 1;
+      return result;
+    } catch (err) {
+      lastErr = err;
+      if (attempt >= retries || !isTransientLoginError(err)) throw err;
+      await sleep(delayMs * (attempt + 1));
+    }
+  }
+  throw lastErr || new Error('ERR_LOGIN_FAILED');
+}
+
+async function processWindsurfLogin({ email, password, loginProxy, autoAdd, warmup = true }) {
   if (!email || !password) {
     const err = new Error('ERR_EMAIL_PASSWORD_REQUIRED');
     err.statusCode = 400;
@@ -91,7 +210,11 @@ async function processWindsurfLogin({ email, password, loginProxy, autoAdd }) {
   // Auto-add to account pool if requested
   let account = null;
   if (autoAdd !== false) {
-    account = addAccountByKey(result.apiKey, result.name || email);
+    account = addAccountByKey(result.apiKey, result.email || email || result.name, {
+      email: result.email || email,
+      method: 'email',
+      apiServerUrl: result.apiServerUrl || '',
+    });
     // Persist refresh token via the setter so it survives restart and
     // the background Firebase-renewal loop can find it.
     if (result.refreshToken) {
@@ -100,9 +223,11 @@ async function processWindsurfLogin({ email, password, loginProxy, autoAdd }) {
     // Persist the per-account proxy we used for login so chat requests
     // also egress through the same IP, then warm up a matching LS.
     if (loginProxy?.host) setAccountProxy(account.id, loginProxy);
-    ensureLsForAccount(account.id)
-      .then(() => probeAccount(account.id))
-      .catch(e => log.warn(`Auto-probe failed: ${e.message}`));
+    if (warmup) {
+      ensureLsForAccount(account.id)
+        .then(() => probeAccount(account.id))
+        .catch(e => log.warn(`Auto-probe failed: ${e.message}`));
+    }
   }
 
   return {
@@ -136,7 +261,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
 
   // ─── Auth ─────────────────────────────────────────────
   if (subpath === '/auth') {
-    const hasSecret = !!(config.dashboardPassword || config.apiKey);
+    const hasSecret = !!(config.dashboardPassword || configuredClientApiKeys().length);
     if (hasSecret) return json(res, 200, { required: true, valid: checkAuth(req) });
     // No secret configured. On localhost binds the dashboard is open; on
     // public binds checkAuth fails closed (see Fix 1 / Fix 3) so the UI must
@@ -162,7 +287,13 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
         ? ((stats.successCount / stats.totalRequests) * 100).toFixed(1)
         : '0.0',
       cache: cacheStats(),
+      usageTotals: stats.usageTotals || stats.usage || {},
+      quickConnect: buildQuickConnect(req),
     });
+  }
+
+  if (subpath === '/quick-connect' && method === 'GET') {
+    return json(res, 200, buildQuickConnect(req));
   }
 
   // ─── Experimental features ────────────────────────────
@@ -330,7 +461,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
 
   // ─── Accounts ─────────────────────────────────────────
   if (subpath === '/accounts' && method === 'GET') {
-    return json(res, 200, { accounts: getAccountList() });
+    return json(res, 200, { accounts: getAccountList(), ...getAccountCount() });
   }
 
   if (subpath === '/accounts' && method === 'POST') {
@@ -788,16 +919,30 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
         return json(res, 400, { error: 'ERR_ACCOUNTS_REQUIRED' });
       }
 
+      const delayMs = clampInt(body?.delayMs, batchLoginDefaults.delayMs, 0, 15000);
+      const retries = clampInt(body?.retries, batchLoginDefaults.retries, 0, 5);
+      const beforeAccounts = getAccountCount();
       const results = [];
+      const seenEmails = new Set();
+      let loginAttempts = 0;
       for (const acct of accounts) {
         const email = String(acct?.email || '').trim();
         const password = String(acct?.password || '').trim();
+        const index = results.length + 1;
+        const duplicate = shouldSkipDuplicateBatchEmail(seenEmails, email, autoAdd);
+        if (duplicate.skip) {
+          results.push(skippedBatchResult(index, email, 'ERR_DUPLICATE_IN_BATCH'));
+          continue;
+        }
+        if (loginAttempts > 0 && delayMs > 0) await sleep(delayMs);
+        loginAttempts++;
         try {
-          const result = await processWindsurfLogin({ email, password, loginProxy, autoAdd });
-          results.push(result);
+          const result = await processWindsurfLoginWithRetry({ email, password, loginProxy, autoAdd, warmup: false }, { retries, delayMs });
+          results.push({ ...result, index: results.length + 1 });
         } catch (err) {
           results.push({
             success: false,
+            index: results.length + 1,
             email,
             error: err.message,
             isAuthFail: !!err.isAuthFail,
@@ -807,12 +952,18 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       }
 
       const successCount = results.filter(r => r.success).length;
-      const failCount = results.length - successCount;
+      const skippedCount = results.filter(r => r.skipped).length;
+      const failCount = results.length - successCount - skippedCount;
       return json(res, 200, {
         success: true,
         total: results.length,
         successCount,
+        skippedCount,
         failCount,
+        beforeAccounts,
+        accounts: getAccountCount(),
+        delayMs,
+        retries,
         results,
       });
     } catch (err) {
@@ -829,7 +980,12 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
       if (!lines.length) return json(res, 400, { error: 'ERR_NO_VALID_LINES' });
 
+      const delayMs = clampInt(body?.delayMs, batchLoginDefaults.delayMs, 0, 15000);
+      const retries = clampInt(body?.retries, batchLoginDefaults.retries, 0, 5);
+      const beforeAccounts = getAccountCount();
       const results = [];
+      const seenEmails = new Set();
+      let loginAttempts = 0;
       for (const line of lines) {
         const parts = line.split(/\s+/);
         let proxy = null, email, password;
@@ -844,22 +1000,32 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
           results.push({ success: false, email: line.slice(0, 30), error: 'ERR_FORMAT_INVALID' });
           continue;
         }
+        const index = results.length + 1;
+        const duplicate = shouldSkipDuplicateBatchEmail(seenEmails, email, autoAdd);
+        if (duplicate.skip) {
+          results.push(skippedBatchResult(index, email, 'ERR_DUPLICATE_IN_BATCH'));
+          continue;
+        }
+        if (loginAttempts > 0 && delayMs > 0) await sleep(delayMs);
+        loginAttempts++;
         try {
           const loginProxy = proxy ? parseProxyUrl(proxy) : getProxyConfig().global;
-          const result = await processWindsurfLogin({ email, password, loginProxy, autoAdd });
+          if (proxy && !loginProxy) throw new Error('ERR_PROXY_FORMAT_INVALID');
+          const result = await processWindsurfLoginWithRetry({ email, password, loginProxy, autoAdd, warmup: false }, { retries, delayMs });
           const binding = buildBatchProxyBinding(result, proxy);
           if (binding) {
               setAccountProxy(binding.accountId, binding.proxy);
               result.proxy = proxy;
-              ensureLsForAccount(binding.accountId).catch(() => {});
           }
-          results.push(result);
+          results.push({ ...result, index: results.length + 1 });
         } catch (err) {
-          results.push({ success: false, email, error: err.message });
+          results.push({ success: false, index: results.length + 1, email, error: err.message, isAuthFail: !!err.isAuthFail, firebaseCode: err.firebaseCode });
         }
       }
       const successCount = results.filter(r => r.success).length;
-      return json(res, 200, { success: true, total: results.length, successCount, failCount: results.length - successCount, results });
+      const skippedCount = results.filter(r => r.skipped).length;
+      const failCount = results.length - successCount - skippedCount;
+      return json(res, 200, { success: true, total: results.length, successCount, skippedCount, failCount, beforeAccounts, accounts: getAccountCount(), delayMs, retries, results });
     } catch (err) {
       return json(res, 400, { error: err.message });
     }
@@ -877,7 +1043,10 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
 
       let account = null;
       if (autoAdd !== false) {
-        account = addAccountByKey(apiKey, name || email || provider || 'OAuth');
+        account = addAccountByKey(apiKey, email || name || provider || 'OAuth', {
+          email,
+          method: provider || 'oauth',
+        });
         if (refreshToken) {
           setAccountTokens(account.id, { refreshToken, idToken });
         }

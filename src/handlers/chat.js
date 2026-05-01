@@ -29,6 +29,13 @@ import { registerSseController } from '../sse-registry.js';
 const HEARTBEAT_MS = 15_000;
 const QUEUE_RETRY_MS = 1_000;
 const QUEUE_MAX_WAIT_MS = 30_000;
+const DEFAULT_MAX_ACCOUNT_ATTEMPTS = 10;
+
+export function getMaxAccountAttempts(activeCount = getAccountList().filter(a => a.status === 'active').length) {
+  const configured = Number.parseInt(process.env.MAX_ACCOUNT_ATTEMPTS || '', 10);
+  const cap = Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_MAX_ACCOUNT_ATTEMPTS;
+  return Math.min(Math.max(3, activeCount), Math.max(3, cap));
+}
 
 // Build the option bag the v2.0.25 semantic key needs. tools / tool_choice /
 // preamble are baked into the digest so a tool schema change misses instead
@@ -961,6 +968,7 @@ export async function handleChatCompletions(body, context = {}) {
   } = body;
   let messages = body.messages;
   const callerKey = context.callerKey || body.__callerKey || '';
+  const statsContext = context.statsContext || body.__statsContext || null;
   const cachePolicy = body.__cachePolicy || null;
   const checkMessageRateLimitFn = context.checkMessageRateLimit || checkMessageRateLimit;
   const waitForAccountFn = context.waitForAccount || waitForAccount;
@@ -1274,6 +1282,7 @@ export async function handleChatCompletions(body, context = {}) {
       waitForAccount: waitForAccountFn,
       cachePolicy,
       wantThinking,
+      statsContext,
       fpOpts: buildReuseOpts({ tools, toolChoice: tool_choice, toolPreamble, preambleTier, emulateTools, route: body.__route || 'chat' }),
     });
   }
@@ -1282,7 +1291,8 @@ export async function handleChatCompletions(body, context = {}) {
   const cached = cacheGet(ckey);
   if (cached) {
     log.info(`Chat: cache HIT model=${displayModel} flow=non-stream`);
-    recordRequest(displayModel, true, 0, null);
+    const usage = cachedUsage(messages, cached.text);
+    recordRequest(displayModel, true, 0, null, { usage, caller: statsContext, cached: true });
     const message = { role: 'assistant', content: cached.text || null };
     if (cached.thinking) message.reasoning_content = cached.thinking;
     return {
@@ -1290,7 +1300,7 @@ export async function handleChatCompletions(body, context = {}) {
       body: {
         id: chatId, object: 'chat.completion', created, model: displayModel,
         choices: [{ index: 0, message, finish_reason: 'stop' }],
-        usage: cachedUsage(messages, cached.text),
+        usage,
       },
     };
   }
@@ -1329,12 +1339,12 @@ export async function handleChatCompletions(body, context = {}) {
   // upstream_transient_error instead of the misleading "rate limit"
   // message the all-accounts-exhausted branch would otherwise produce.
   let internalCount = 0;
-  // Dynamic: try every active account in the pool (capped at 10) so a
+  // Dynamic: try every active account in the pool (configurable cap) so a
   // large pool with many rate-limited accounts can still fall through
   // to a free one. Was hardcoded 3 — in pools bigger than 3 with the
   // first accounts rate-limited, healthy accounts were never reached
   // even though they would have worked (issue #5).
-  const maxAttempts = Math.min(10, Math.max(3, getAccountList().filter(a => a.status === 'active').length));
+  const maxAttempts = getMaxAccountAttempts();
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     let acct = null;
     if (reuseEntry && attempt === 0) {
@@ -1455,6 +1465,7 @@ export async function handleChatCompletions(body, context = {}) {
       reuseEnabled ? { reuseEntry, lsPort: ls.port, apiKey: acct.apiKey, callerKey, cachePolicy, fpOpts } : null,
       modelInfo?.provider || null,
       emulateTools, toolPreamble, wantJson, cachePolicy, wantThinking,
+      statsContext,
     );
     if (result.status === 200) return result;
     reuseEntry = null; // don't try to reuse on the retry
@@ -1564,7 +1575,7 @@ export async function handleChatCompletions(body, context = {}) {
   return lastErr || { status: 503, body: { error: { message: 'No active accounts available', type: 'pool_exhausted' } } };
 }
 
-async function nonStreamResponse(client, id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, apiKey, ckey, poolCtx, provider, emulateTools, toolPreamble, wantJson = false, cachePolicy = null, wantThinking = false) {
+async function nonStreamResponse(client, id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, apiKey, ckey, poolCtx, provider, emulateTools, toolPreamble, wantJson = false, cachePolicy = null, wantThinking = false, statsContext = null) {
   const startTime = Date.now();
   try {
     let allText = '';
@@ -1662,16 +1673,6 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
       }, poolCtx.callerKey || '', ttlHint === undefined ? 0 : ttlHint);
     }
 
-    reportSuccess(apiKey);
-    updateCapability(apiKey, modelKey, true, 'success');
-    recordRequest(model, true, Date.now() - startTime, apiKey);
-
-    // Store in cache for next identical request. Skip caching tool_call
-    // responses — they're inherently contextual and the cache doesn't
-    // preserve the tool_calls array, so a cache hit would return a
-    // content-only response with finish_reason:stop, breaking tool flow.
-    if (ckey && !toolCalls.length) cacheSet(ckey, { text: allText, thinking: allThinking });
-
     const message = { role: 'assistant', content: allText || null };
     if (allThinking) message.reasoning_content = allThinking;
     if (toolCalls.length) {
@@ -1698,6 +1699,16 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     // non-reuse requests with `cache_control: { ttl: '1h' }` still attribute
     // their tokens to ephemeral_1h_input_tokens correctly (see #82, #83).
     const usage = buildUsageBody(serverUsage, messages, allText, allThinking, cachePolicy);
+    reportSuccess(apiKey);
+    updateCapability(apiKey, modelKey, true, 'success');
+    recordRequest(model, true, Date.now() - startTime, apiKey, { usage, caller: statsContext });
+
+    // Store in cache for next identical request. Skip caching tool_call
+    // responses — they're inherently contextual and the cache doesn't
+    // preserve the tool_calls array, so a cache hit would return a
+    // content-only response with finish_reason:stop, breaking tool flow.
+    if (ckey && !toolCalls.length) cacheSet(ckey, { text: allText, thinking: allThinking });
+
     const finishReason = toolCalls.length ? 'tool_calls' : 'stop';
     return {
       status: 200,
@@ -1722,7 +1733,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     if (err.isModelError && err.kind !== 'transient_stall' && !isRateLimit && !isInternal) {
       updateCapability(apiKey, modelKey, false, 'model_error');
     }
-    recordRequest(model, false, Date.now() - startTime, apiKey);
+    recordRequest(model, false, Date.now() - startTime, apiKey, { caller: statsContext });
     log.error('Chat error:', err.message);
     // Rate limits → 429 with Retry-After; model errors → 403; others → 502
     if (isRateLimit) {
@@ -1775,6 +1786,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
   // throw a ReferenceError mid-stream — the exact failure surface reported
   // in issues #82 and #83.
   const cachePolicy = deps.cachePolicy || null;
+  const statsContext = deps.statsContext || null;
   const fpOpts = deps.fpOpts || { route: 'chat' };
   return {
     status: 200,
@@ -1824,7 +1836,8 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
       const cached = cacheGet(ckey);
       if (cached) {
         log.info(`Chat: cache HIT model=${model} flow=stream`);
-        recordRequest(model, true, 0, null);
+        const usage = cachedUsage(messages, cached.text);
+        recordRequest(model, true, 0, null, { usage, caller: statsContext, cached: true });
         try {
           send({ id, object: 'chat.completion.chunk', created, model,
             choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }] });
@@ -1839,7 +1852,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
           send({ id, object: 'chat.completion.chunk', created, model,
             choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
           send({ id, object: 'chat.completion.chunk', created, model,
-            choices: [], usage: cachedUsage(messages, cached.text) });
+            choices: [], usage });
           if (!res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); }
         } finally {
           unregisterSse();
@@ -1859,12 +1872,12 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
       // between accounts and (b) surface upstream_transient_error when
       // every attempt hit it.
       let streamInternalCount = 0;
-      // Dynamic: try every active account in the pool (capped at 10) so a
-  // large pool with many rate-limited accounts can still fall through
-  // to a free one. Was hardcoded 3 — in pools bigger than 3 with the
-  // first accounts rate-limited, healthy accounts were never reached
-  // even though they would have worked (issue #5).
-  const maxAttempts = Math.min(10, Math.max(3, getAccountList().filter(a => a.status === 'active').length));
+      // Dynamic: try every active account in the pool (configurable cap) so a
+      // large pool with many rate-limited accounts can still fall through
+      // to a free one. Was hardcoded 3 — in pools bigger than 3 with the
+      // first accounts rate-limited, healthy accounts were never reached
+      // even though they would have worked (issue #5).
+      const maxAttempts = getMaxAccountAttempts();
 
       // Accumulate chunks so we can cache a successful response at the end.
       let accText = '';
@@ -2155,7 +2168,8 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             // success
             if (hadSuccess) reportSuccess(currentApiKey);
             updateCapability(currentApiKey, modelKey, true, 'success');
-            recordRequest(model, true, Date.now() - startTime, currentApiKey);
+            const usage = buildUsageBody(cascadeResult?.usage || null, messages, accText, accThinking, cachePolicy);
+            recordRequest(model, true, Date.now() - startTime, currentApiKey, { usage, caller: statsContext });
             if (!rolePrinted) {
               send({ id, object: 'chat.completion.chunk', created, model,
                 choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }] });
@@ -2199,7 +2213,6 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             send({ id, object: 'chat.completion.chunk', created, model,
               choices: [{ index: 0, delta: {}, finish_reason: finalReason }] });
             {
-              const usage = buildUsageBody(cascadeResult?.usage || null, messages, accText, accThinking, cachePolicy);
               send({ id, object: 'chat.completion.chunk', created, model,
                 choices: [], usage });
             }
@@ -2269,7 +2282,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
 
         // All attempts failed
         log.error('Stream error after retries:', lastErr?.message || String(lastErr || 'account queue timed out without an error object'));
-        recordRequest(model, false, Date.now() - startTime, currentApiKey);
+        recordRequest(model, false, Date.now() - startTime, currentApiKey, { caller: statsContext });
         try {
           const temporaryUnavailable = isAllTemporarilyUnavailable(modelKey);
           const rl = isAllRateLimited(modelKey);
